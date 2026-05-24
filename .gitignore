@@ -1,0 +1,41 @@
+# Build outputs
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Logs / runtime state
+*.log
+.petcache.json
+**/.petcache.json
+*_history.jsonl
+**/*_history.jsonl
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temp
+_zip_temp/
+tmp/
+temp/
+*.tmp
+
+# Keep only pet5 pet folder assets in this repo
+assets/*
+!assets/pet.json
+!assets/pets/
+assets/pets/*
+!assets/pets/pet5/
+!assets/pets/pet5/**
+assets/pets/pet5/.petcache.json
+assets/pets/pet5/*_history.jsonl
+assets/pets/pet5/animations/*_history.jsonl

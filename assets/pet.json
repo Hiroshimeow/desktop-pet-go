@@ -1,0 +1,54 @@
+{
+  "schema": 4,
+  "id": "_default",
+  "name": "Default Pet Template",
+  "scale": 0.5,
+  "frame_width": 256,
+  "frame_height": 256,
+  "columns": 5,
+  "default_animation": "idle",
+  "animation_dir": "animations",
+  "baseline_y": 224,
+  "hitbox": { "x": 48, "y": 24, "w": 160, "h": 216 },
+  "motion": {
+    "auto_roam_chance": 28,
+    "min_idle_ms": 2600,
+    "max_idle_ms": 7200,
+    "walk_distance_threshold": 520,
+    "screen_margin": 28
+  },
+  "interactions": {
+    "left_click": { "animation": "happy", "duration_ms": 1200 },
+    "right_click": { "animation": "thinking", "duration_ms": 1800 },
+    "drag_start": { "random": ["cry", "angry", "scared", "dizzy"], "duration_ms": 900 },
+    "drag_hold": { "random": ["cry", "angry", "scared", "dizzy"], "interval_ms": 650 },
+    "drag_end": { "animation": "wave", "duration_ms": 900 },
+    "music_start": { "animation": "dance", "duration_ms": 3000 }
+  },
+  "act_blacklist": ["source", "preview", "*_draft", "*_tmp", "walk_left", "walk_right", "run_left", "run_right"],
+  "unknown_animation_default": {
+    "fps": 5,
+    "kind": "action",
+    "locomotion": false,
+    "duration_ms": 1500,
+    "description": "Auto-added animation discovered from animations/<act>.png. Tune this entry in the pet-specific pet.json when needed."
+  },
+  "animations": {
+    "idle": { "file": "idle.png", "fps": 4, "kind": "state", "locomotion": false, "duration_ms": 2500, "description": "Ã„ÂÃ¡Â»Â©ng yÃƒÂªn, blink/thÃ¡Â»Å¸ nhÃ¡ÂºÂ¹." },
+    "walk": { "file": "walk.png", "fps": 5, "kind": "move", "locomotion": true, "speed_px_s": 30, "native_facing": "right", "description": "Ã„Âi ngang chÃ¡ÂºÂ­m. ChÃ¡Â»â€° dÃƒÂ¹ng khi pet Ã„â€˜ang tÃ¡Â»Â± di chuyÃ¡Â»Æ’n." },
+    "run": { "file": "run.png", "fps": 7, "kind": "move", "locomotion": true, "speed_px_s": 58, "native_facing": "right", "description": "Di chuyÃ¡Â»Æ’n nhanh hÃ†Â¡n walk, dÃƒÂ¹ng khi target xa." },
+    "happy": { "file": "happy.png", "fps": 5, "kind": "emotion", "locomotion": false, "duration_ms": 1500, "description": "Vui/cÃ†Â°Ã¡Â»Âi. Ã„ÂÃ¡Â»Â©ng yÃƒÂªn." },
+    "cry": { "file": "cry.png", "fps": 5, "kind": "emotion", "locomotion": false, "duration_ms": 1600, "description": "KhÃƒÂ³c. Ã„ÂÃ¡Â»Â©ng yÃƒÂªn hoÃ¡ÂºÂ·c Ã„â€˜ang bÃ¡Â»â€¹ kÃƒÂ©o." },
+    "angry": { "file": "angry.png", "fps": 5, "kind": "emotion", "locomotion": false, "duration_ms": 1600, "description": "TÃ¡Â»Â©c giÃ¡ÂºÂ­n. Ã„ÂÃ¡Â»Â©ng yÃƒÂªn hoÃ¡ÂºÂ·c Ã„â€˜ang bÃ¡Â»â€¹ kÃƒÂ©o." },
+    "wave": { "file": "wave.png", "fps": 5, "kind": "reaction", "locomotion": false, "duration_ms": 1300, "description": "VÃ¡ÂºÂ«y tay/chÃƒÂ o." },
+    "sleepy": { "file": "sleepy.png", "fps": 4, "kind": "state", "locomotion": false, "duration_ms": 3500, "description": "BuÃ¡Â»â€œn ngÃ¡Â»Â§/ngÃƒÂ¡p." },
+    "surprised": { "file": "surprised.png", "fps": 5, "kind": "emotion", "locomotion": false, "duration_ms": 1300, "description": "NgÃ¡ÂºÂ¡c nhiÃƒÂªn." },
+    "shy": { "file": "shy.png", "fps": 5, "kind": "emotion", "locomotion": false, "duration_ms": 1500, "description": "NgÃ¡ÂºÂ¡i/ngÃ†Â°Ã¡Â»Â£ng." },
+    "thinking": { "file": "thinking.png", "fps": 4, "kind": "state", "locomotion": false, "duration_ms": 2200, "description": "Suy nghÃ„Â©/phÃƒÂ¢n vÃƒÂ¢n." },
+    "cheer": { "file": "cheer.png", "fps": 6, "kind": "reaction", "locomotion": false, "duration_ms": 1500, "description": "CÃ¡Â»â€¢ vÃ…Â©/vÃ¡Â»â€” tay." },
+    "scared": { "file": "scared.png", "fps": 6, "kind": "emotion", "locomotion": false, "duration_ms": 1500, "description": "SÃ¡Â»Â£/run." },
+    "dizzy": { "file": "dizzy.png", "fps": 5, "kind": "emotion", "locomotion": false, "duration_ms": 1800, "description": "ChoÃƒÂ¡ng/chÃƒÂ³ng mÃ¡ÂºÂ·t." },
+    "dance": { "file": "dance.png", "fps": 6, "kind": "reaction", "locomotion": false, "duration_ms": 3500, "description": "NhÃ¡ÂºÂ£y theo nhÃ¡ÂºÂ¡c." },
+    "sit_idle": { "file": "sit_idle.png", "fps": 4, "kind": "state", "locomotion": false, "duration_ms": 4500, "description": "NgÃ¡Â»â€œi nghÃ¡Â»â€°." }
+  }
+}
