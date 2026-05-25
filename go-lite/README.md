@@ -37,14 +37,14 @@ cry.png         khóc
 angry.png       tức giận
 wave.png        vẫy tay
 sleepy.png      buồn ngủ
-surprised.png   ngạc nhiên
-shy.png         ngại
-thinking.png    suy nghĩ
-cheer.png       cổ vũ/vỗ tay
-scared.png      sợ
-dizzy.png       chóng mặt
-dance.png       nhảy theo nhạc
-sit_idle.png    ngồi nghỉ
+surprised.png   ngạc nhiên nếu pet có asset này
+shy.png         ngại nếu pet có asset này
+thinking.png    suy nghĩ nếu pet có asset này
+cheer.png       cổ vũ/vỗ tay nếu pet có asset này
+scared.png      sợ nếu pet có asset này
+dizzy.png       chóng mặt nếu pet có asset này
+dance.png       nhảy theo nhạc nếu pet có asset này
+sit_idle.png    ngồi nghỉ nếu pet có asset này
 ```
 
 ## Animation logic
@@ -62,8 +62,8 @@ sit_idle.png    ngồi nghỉ
 - Giữ chuột trái để kéo pet đi khắp màn hình.
 - Khi kéo: random `cry`, `angry`, `sleepy`, `wave`.
 - Thả chuột trái: `wave`.
-- Chuột phải: random `angry`, `cry`, `wave`, `happy`.
-- Để im: pet tự `idle`, `walk`, `run`, `sleepy`, `sit_idle`, `thinking`, `wave`, `happy`.
+- Chuột phải: pet chạy `right_click`; với pet5 là random `angry`, `cry`, `wave`, `happy`.
+- Để im: pet tự dùng các animation đang có như `idle`, `walk`, `run`, `sleepy`, `wave`, `happy`; các act mở rộng như `sit_idle`, `thinking` chỉ dùng khi pet có asset tương ứng.
 
 ## Run
 

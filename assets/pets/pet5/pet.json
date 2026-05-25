@@ -52,6 +52,17 @@
       "random": null,
       "duration_ms": 1200,
       "interval_ms": 0
+    },
+    "right_click": {
+      "animation": "",
+      "random": [
+        "angry",
+        "cry",
+        "happy",
+        "wave"
+      ],
+      "duration_ms": 1300,
+      "interval_ms": 0
     }
   },
   "act_blacklist": [

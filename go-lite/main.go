@@ -68,6 +68,7 @@ var (
 	kernel32             = syscall.NewLazyDLL("kernel32.dll")
 	pRegisterClassExW    = user32.NewProc("RegisterClassExW")
 	pCreateWindowExW     = user32.NewProc("CreateWindowExW")
+	pDestroyWindow       = user32.NewProc("DestroyWindow")
 	pDefWindowProcW      = user32.NewProc("DefWindowProcW")
 	pShowWindow          = user32.NewProc("ShowWindow")
 	pPostQuitMessage     = user32.NewProc("PostQuitMessage")
@@ -300,6 +301,7 @@ func (a *App) createWindows(profileBase string, assetsPath string, petsOverride 
 			pet := NewPet(fmt.Sprintf("%s-%d", active.ID, i+1), name, manifest, store, a.ScreenW, a.ScreenH, frameW, frameH)
 			wp := &WindowPet{HWND: hwnd, Pet: pet, Scale: scale, FrameW: frameW, FrameH: frameH}
 			if err := wp.initBitmap(frameW, frameH); err != nil {
+				pDestroyWindow.Call(hwnd)
 				return err
 			}
 			a.Pets = append(a.Pets, wp)
@@ -327,8 +329,15 @@ func initLog() {
 }
 
 func (wp *WindowPet) initBitmap(w, h int) error {
-	sdc, _, _ := pGetDC.Call(0)
-	dc, _, _ := pCreateCompatibleDC.Call(sdc)
+	sdc, _, err := pGetDC.Call(0)
+	if sdc == 0 {
+		return fmt.Errorf("GetDC(0) failed: %w", err)
+	}
+	dc, _, err := pCreateCompatibleDC.Call(sdc)
+	if dc == 0 {
+		pReleaseDC.Call(0, sdc)
+		return fmt.Errorf("CreateCompatibleDC failed: %w", err)
+	}
 	var bits uintptr
 	bi := bitmapInfo{}
 	bi.Header.Size = uint32(unsafe.Sizeof(bitmapInfoHeader{}))
@@ -340,7 +349,8 @@ func (wp *WindowPet) initBitmap(w, h int) error {
 	hbm, _, err := pCreateDIBSection.Call(dc, uintptr(unsafe.Pointer(&bi)), DIB_RGB_COLORS, uintptr(unsafe.Pointer(&bits)), 0, 0)
 	pReleaseDC.Call(0, sdc)
 	if hbm == 0 {
-		return err
+		pDeleteDC.Call(dc)
+		return fmt.Errorf("CreateDIBSection failed: %w", err)
 	}
 	old, _, err := pSelectObject.Call(dc, hbm)
 	if old == 0 {

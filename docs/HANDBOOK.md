@@ -263,7 +263,7 @@ Tool hiện tại không dùng threshold để khoét foreground toàn ảnh n�
 - Click trái/giữ: bắt đầu drag, pet random emotion nếu có act phù hợp.
 - Drag hold: định kỳ đổi emotion như `cry`, `angry`, `scared`, `dizzy` nếu pet có.
 - Thả chuột: chạy `wave` nếu có.
-- Chuột phải: chạy animation cấu hình ở `right_click`, mặc định là `thinking` nếu pet có.
+- Chuột phải: chạy animation cấu hình ở `right_click`; với pet5 hiện là random `angry`, `cry`, `happy`, `wave` để khớp asset đang có.
 - `-click-cmd` và `-right-cmd` cho phép gọi command ngoài.
 
 Ví dụ:
@@ -289,7 +289,7 @@ Pet runtime không nên ôm TTS, Vision, OpenAI trực tiếp nếu muốn nhẹ
 ```text
 music_start -> dance
 music_stop  -> idle
-tts_start   -> thinking / wave
+tts_start   -> thinking nếu pet có asset này / wave
 vision_seen -> surprised
 api_error   -> dizzy / scared
 ```

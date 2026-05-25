@@ -138,7 +138,7 @@ Click giữ chuột trái: pet bị kéo và random emotion như `cry`, `angry`,
 
 Thả chuột trái: pet chạy `wave` nếu có.
 
-Chuột phải: pet chạy `right_click`, mặc định là `thinking`. Có thể gắn command ngoài:
+Chuột phải: pet chạy `right_click`; riêng `pet5` random một trong `angry`, `cry`, `happy`, `wave` để luôn có phản hồi với asset hiện có. Có thể gắn command ngoài:
 
 ```powershell
 .\pet-lite.exe -assets ..\assets -pet pet5 -right-cmd "Start-Process notepad"
