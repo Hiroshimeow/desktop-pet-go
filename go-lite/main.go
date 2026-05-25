@@ -456,6 +456,7 @@ func (a *App) handleInputEvent(ev InputEvent) {
 	}
 	switch ev.Kind {
 	case InputLeftDown:
+		a.cancelOtherLeftInputs(p, "new_left_down")
 		a.beginPendingLeft(p, ev.X, ev.Y, ev.Reason)
 	case InputLeftUp:
 		if p.Drag {
@@ -483,7 +484,7 @@ func (a *App) handleInputEvent(ev InputEvent) {
 func (a *App) loop() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("panic in render loop: %v", r)
+			log.Printf("panic in render loop: %v\n%s", r, debug.Stack())
 		}
 	}()
 	last := time.Now()
@@ -626,9 +627,11 @@ func wndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		emitInput(InputEvent{Kind: InputCancel, HWND: hwnd, Reason: "cancel_mode"})
 		return 0
 	case WM_CLOSE:
-		log.Printf("WM_CLOSE hwnd=%d", hwnd)
-		ret, _, _ := pDefWindowProcW.Call(hwnd, uintptr(msg), wParam, lParam)
-		return ret
+		// Desktop-pet windows do not have a close affordance. During rapid drag/double-click
+		// across multiple layered windows Windows can still deliver WM_CLOSE via shell/system
+		// paths; treating it with DefWindowProc destroys the pet and can quit the whole app.
+		log.Printf("WM_CLOSE ignored hwnd=%d", hwnd)
+		return 0
 	case WM_DESTROY:
 		log.Printf("WM_DESTROY hwnd=%d", hwnd)
 		if app != nil {
@@ -683,6 +686,24 @@ func (a *App) cancelLeftInput(wp *WindowPet, reason string, releaseCapture bool)
 	}
 	if wp.PendingLeft {
 		a.endPendingLeft(wp, reason, releaseCapture)
+	}
+}
+
+func (a *App) cancelOtherLeftInputs(active *WindowPet, reason string) {
+	if active == nil {
+		return
+	}
+	a.Mu.RLock()
+	petsSnapshot := append([]*WindowPet(nil), a.Pets...)
+	a.Mu.RUnlock()
+	for _, wp := range petsSnapshot {
+		if wp == nil || wp == active || wp.HWND == active.HWND || wp.Pet == nil {
+			continue
+		}
+		if wp.PendingLeft || wp.Drag || wp.Pet.DragMode {
+			log.Printf("cancel stale left input hwnd=%d pet=%s active_hwnd=%d reason=%s", wp.HWND, wp.Pet.InstanceID, active.HWND, reason)
+			a.cancelLeftInput(wp, reason, false)
+		}
 	}
 }
 
