@@ -4,7 +4,7 @@ Sprite Row Cutter GUI
 
 Mục tiêu:
 - Mở 1 ảnh sprite sheet.
-- Dùng lưới 1 hàng x 5..10 frame để chọn đúng một hàng animation.
+- Dùng lưới 1 hàng x 5..20 frame để chọn đúng một hàng animation.
 - Vùng được chọn sáng rõ, phần ngoài bị dim xám.
 - Export hàng đó thành <act>.png dạng strip ngang.
 - Mỗi frame output mặc định là 256x256, phù hợp desktop-pet-lite.
@@ -33,7 +33,28 @@ except AttributeError:  # Pillow cũ
     RESAMPLE = Image.LANCZOS
 
 
-DEFAULT_ACTS = ["idle", "walk", "run", "happy", "cry", "angry", "wave", "sleepy"]
+DEFAULT_ACTS = [
+    "idle",
+    "walk",
+    "run",
+    "happy",
+    "cry",
+    "angry",
+    "wave",
+    "sleepy",
+    "surprised",
+    "shy",
+    "thinking",
+    "cheer",
+    "scared",
+    "dizzy",
+    "dance",
+    "sit_idle",
+    "jump",
+    "fly",
+    "attack",
+    "hurt",
+]
 
 
 def clamp(value: float, lo: float, hi: float) -> float:
@@ -152,20 +173,24 @@ class SpriteRowCutterApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
 
-        self.title("Sprite Row Cutter - 1x5 to 1x10 Animation Cutter")
+        self.title("Sprite Row Cutter - 1x5 to 1x20 Animation Cutter")
         self.geometry("1220x840")
         self.minsize(980, 680)
 
         self.image_path: Path | None = None
-        self.output_dir: Path = Path.cwd() / "out"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir: Path = Path.cwd()
+        self.output_dir_user_set = False
 
         self.image: Image.Image | None = None
         self.tk_image: ImageTk.PhotoImage | None = None
 
         self.scale = 1.0
+        self.fit_scale = 1.0
+        self.user_zoom = 1.0
         self.offset_x = 0
         self.offset_y = 0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
 
         # Selection in original image coordinate: x, y, w, h.
         self.sel = [0.0, 0.0, 100.0, 100.0]
@@ -173,6 +198,7 @@ class SpriteRowCutterApp(tk.Tk):
         self.drag_mode: str | None = None
         self.drag_start_img = (0.0, 0.0)
         self.drag_start_sel = [0.0, 0.0, 100.0, 100.0]
+        self.drag_start_pan = (0.0, 0.0)
 
         self.act_name_var = tk.StringVar(value="idle")
         self.frame_count_var = tk.IntVar(value=5)
@@ -208,7 +234,7 @@ class SpriteRowCutterApp(tk.Tk):
         frame_spin = ttk.Spinbox(
             toolbar,
             from_=5,
-            to=10,
+            to=20,
             textvariable=self.frame_count_var,
             width=4,
             command=self.redraw,
@@ -229,14 +255,15 @@ class SpriteRowCutterApp(tk.Tk):
         ttk.Button(toolbar, text="Auto Row", command=self.auto_row_by_index).pack(side="right", padx=(8, 0))
         ttk.Spinbox(toolbar, from_=0, to=99, textvariable=self.row_index_var, width=4).pack(side="right")
         ttk.Label(toolbar, text="Row:").pack(side="right", padx=(8, 4))
+        ttk.Button(toolbar, text="Export + Next", command=self.export_row_and_next).pack(side="right", padx=(8, 0))
         ttk.Button(toolbar, text="Export Row", command=self.export_row).pack(side="right", padx=(8, 0))
 
         hint = ttk.Label(
             root,
             text=(
-                "Mouse: kéo vùng sáng để di chuyển; kéo sát viền/góc để resize. "
-                "Wheel: đổi chiều cao. Ctrl+Wheel: đổi chiều rộng. "
-                "Arrow: di chuyển. Shift+Arrow: resize. PageUp/PageDown: nhảy 1 hàng."
+                "Mouse: kéo vùng sáng để di chuyển; kéo viền/góc lớn để resize. "
+                "Wheel: zoom ảnh. Shift+Wheel: đổi chiều cao. Ctrl+Wheel: đổi chiều rộng. Middle/Right drag: pan. "
+                "Arrow: di chuyển. Shift+Arrow: resize. PageUp/PageDown: nhảy 1 hàng. Enter: export. Ctrl+Enter: export+next."
             ),
             padding=(8, 0),
         )
@@ -253,6 +280,12 @@ class SpriteRowCutterApp(tk.Tk):
         self.canvas.bind("<ButtonPress-1>", self.on_mouse_down)
         self.canvas.bind("<B1-Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+        self.canvas.bind("<ButtonPress-2>", self.on_pan_down)
+        self.canvas.bind("<B2-Motion>", self.on_pan_move)
+        self.canvas.bind("<ButtonRelease-2>", self.on_pan_up)
+        self.canvas.bind("<ButtonPress-3>", self.on_pan_down)
+        self.canvas.bind("<B3-Motion>", self.on_pan_move)
+        self.canvas.bind("<ButtonRelease-3>", self.on_pan_up)
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
 
         # Linux wheel fallback.
@@ -266,6 +299,13 @@ class SpriteRowCutterApp(tk.Tk):
 
         self.bind("<Prior>", lambda _e: self.move_selection(0, -self.sel[3]))  # PageUp
         self.bind("<Next>", lambda _e: self.move_selection(0, self.sel[3]))  # PageDown
+        self.bind("<plus>", lambda _e: self.zoom_image(1.15))
+        self.bind("<KP_Add>", lambda _e: self.zoom_image(1.15))
+        self.bind("<minus>", lambda _e: self.zoom_image(1 / 1.15))
+        self.bind("<KP_Subtract>", lambda _e: self.zoom_image(1 / 1.15))
+        self.bind("<Control-0>", lambda _e: self.reset_zoom())
+        self.bind("<Return>", lambda _e: self.export_row())
+        self.bind("<Control-Return>", lambda _e: self.export_row_and_next())
 
     # ---------------- File actions ----------------
 
@@ -288,6 +328,11 @@ class SpriteRowCutterApp(tk.Tk):
 
         self.image_path = Path(path)
         self.image = img
+        if not self.output_dir_user_set:
+            self.output_dir = self.image_path.parent
+        self.user_zoom = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
 
         # Default selection: row 0 of an 8x5 sheet.
         estimated_rows = 8
@@ -311,13 +356,14 @@ class SpriteRowCutterApp(tk.Tk):
             return
         self.output_dir = Path(path)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir_user_set = True
         self.status_var.set(f"Output dir: {self.output_dir}")
 
     # ---------------- Coordinate helpers ----------------
 
     def get_frame_count(self) -> int:
         try:
-            return int(clamp(int(self.frame_count_var.get()), 5, 10))
+            return int(clamp(int(self.frame_count_var.get()), 5, 20))
         except Exception:
             return 5
 
@@ -377,13 +423,15 @@ class SpriteRowCutterApp(tk.Tk):
         ch = max(1, self.canvas.winfo_height())
         iw, ih = self.image.size
 
-        self.scale = min(cw / iw, ch / ih) * 0.96
-        self.scale = max(0.05, self.scale)
+        self.fit_scale = min(cw / iw, ch / ih) * 0.96
+        self.fit_scale = max(0.05, self.fit_scale)
+        self.user_zoom = clamp(self.user_zoom, 0.1, 16.0)
+        self.scale = max(0.02, self.fit_scale * self.user_zoom)
 
         dw = max(1, int(iw * self.scale))
         dh = max(1, int(ih * self.scale))
-        self.offset_x = (cw - dw) // 2
-        self.offset_y = (ch - dh) // 2
+        self.offset_x = int((cw - dw) // 2 + self.pan_x)
+        self.offset_y = int((ch - dh) // 2 + self.pan_y)
 
         base = self.image.resize((dw, dh), RESAMPLE).convert("RGBA")
 
@@ -420,7 +468,7 @@ class SpriteRowCutterApp(tk.Tk):
                 draw.line((gx, sy0, gx, sy1), fill=(255, 255, 255, 220), width=2)
 
         # Handles.
-        handle = 8
+        handle = 18
         for hx, hy in [
             (sx0, sy0),
             (sx1, sy0),
@@ -437,14 +485,11 @@ class SpriteRowCutterApp(tk.Tk):
                 outline=(0, 0, 0, 180),
             )
 
-        # Info text.
-        label = (
-            f"{self.act_name_var.get() or 'animation'} | "
-            f"{frames} frames | "
-            f"crop x={int(x)} y={int(y)} w={int(w)} h={int(h)}"
+        self.status_var.set(
+            f"{self.act_name_var.get() or 'animation'} | {frames} frames | "
+            f"crop x={int(x)} y={int(y)} w={int(w)} h={int(h)} | "
+            f"zoom={self.user_zoom:.2f}x | output={self.output_dir}"
         )
-        draw.rectangle((8, 8, 8 + len(label) * 8, 34), fill=(0, 0, 0, 150))
-        draw.text((14, 13), label, fill=(255, 255, 255, 255))
 
         self.tk_image = ImageTk.PhotoImage(preview)
         self.canvas.create_image(self.offset_x, self.offset_y, image=self.tk_image, anchor="nw")
@@ -455,7 +500,7 @@ class SpriteRowCutterApp(tk.Tk):
         x, y, w, h = self.sel
         x0, y0, x1, y1 = x, y, x + w, y + h
 
-        threshold = max(6.0 / self.scale, 4.0)
+        threshold = max(14.0 / self.scale, 6.0)
 
         near_l = abs(ix - x0) <= threshold
         near_r = abs(ix - x1) <= threshold
@@ -552,19 +597,67 @@ class SpriteRowCutterApp(tk.Tk):
 
         x, y, w, h = self.sel
 
+        shift_pressed = bool(getattr(event, "state", 0) & 0x0001)
+
         if ctrl_pressed:
             # Resize width from center.
             new_w = w + direction * step * 2
             cx = x + w / 2
             self.sel = [cx - new_w / 2, y, new_w, h]
-        else:
+            self.clamp_selection()
+            self.redraw()
+            return
+        if shift_pressed:
             # Resize height from center.
             new_h = h + direction * step * 2
             cy = y + h / 2
             self.sel = [x, cy - new_h / 2, w, new_h]
+            self.clamp_selection()
+            self.redraw()
+            return
 
-        self.clamp_selection()
+        self.zoom_image(1.12 if direction > 0 else 1 / 1.12, event.x, event.y)
+
+    def zoom_image(self, factor: float, canvas_x: float | None = None, canvas_y: float | None = None) -> None:
+        if self.image is None:
+            return
+
+        if canvas_x is None:
+            canvas_x = self.canvas.winfo_width() / 2
+        if canvas_y is None:
+            canvas_y = self.canvas.winfo_height() / 2
+
+        before = self.canvas_to_image(canvas_x, canvas_y)
+        self.user_zoom = clamp(self.user_zoom * factor, 0.1, 16.0)
         self.redraw()
+        after_canvas_x, after_canvas_y = self.image_to_canvas(*before)
+        self.pan_x += canvas_x - after_canvas_x
+        self.pan_y += canvas_y - after_canvas_y
+        self.redraw()
+
+    def reset_zoom(self) -> None:
+        self.user_zoom = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self.redraw()
+
+    def on_pan_down(self, event: tk.Event) -> None:
+        self.drag_mode = "pan"
+        self.drag_start_img = (float(event.x), float(event.y))
+        self.drag_start_pan = (self.pan_x, self.pan_y)
+
+    def on_pan_move(self, event: tk.Event) -> None:
+        if self.drag_mode != "pan":
+            return
+        sx, sy = self.drag_start_img
+        px, py = self.drag_start_pan
+        self.pan_x = px + float(event.x) - sx
+        self.pan_y = py + float(event.y) - sy
+        self.redraw()
+
+    def on_pan_up(self, _event: tk.Event) -> None:
+        if self.drag_mode == "pan":
+            self.drag_mode = None
 
     def nudge(self, dx: int, dy: int, event: tk.Event) -> None:
         if self.image is None:
@@ -635,10 +728,10 @@ class SpriteRowCutterApp(tk.Tk):
         out.alpha_composite(frame, (px, py))
         return out
 
-    def export_row(self) -> None:
+    def export_row(self) -> bool:
         if self.image is None:
             messagebox.showwarning("No image", "Bạn chưa mở ảnh.")
-            return
+            return False
 
         act = safe_name(self.act_name_var.get())
         frames = self.get_frame_count()
@@ -665,6 +758,10 @@ class SpriteRowCutterApp(tk.Tk):
             individual_frames.append(prepared)
 
         out_path = out_dir / f"{act}.png"
+        if out_path.exists():
+            if not messagebox.askyesno("Overwrite image?", f"File đã tồn tại:\n{out_path}\n\nGhi đè file này?"):
+                self.status_var.set(f"Export cancelled: {out_path}")
+                return False
         strip.save(out_path)
 
         if self.save_frames_var.get():
@@ -695,7 +792,20 @@ class SpriteRowCutterApp(tk.Tk):
             f.write(json.dumps(metadata, ensure_ascii=False) + "\n")
 
         self.status_var.set(f"Exported: {out_path}")
-        messagebox.showinfo("Export done", f"Đã xuất:\n{out_path}")
+        return True
+
+    def export_row_and_next(self) -> None:
+        if not self.export_row():
+            return
+        try:
+            current_row = int(self.row_index_var.get())
+        except Exception:
+            current_row = 0
+        next_row = current_row + 1
+        self.row_index_var.set(next_row)
+        if next_row < len(DEFAULT_ACTS):
+            self.act_name_var.set(DEFAULT_ACTS[next_row])
+        self.auto_row_by_index()
 
 
 def main() -> None:
