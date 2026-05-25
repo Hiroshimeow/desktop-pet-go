@@ -1,7 +1,7 @@
 {
   "schema": 4,
   "id": "pet5",
-  "name": "pet2",
+  "name": "pet5",
   "scale": 0.5,
   "frame_width": 256,
   "frame_height": 256,
@@ -62,54 +62,6 @@
     "walk_left",
     "walk_right",
     "run_left",
-    "run_right",
-    "source",
-    "preview",
-    "*_draft",
-    "*_tmp",
-    "walk_left",
-    "walk_right",
-    "run_left",
-    "run_right",
-    "source",
-    "preview",
-    "*_draft",
-    "*_tmp",
-    "walk_left",
-    "walk_right",
-    "run_left",
-    "run_right",
-    "source",
-    "preview",
-    "*_draft",
-    "*_tmp",
-    "walk_left",
-    "walk_right",
-    "run_left",
-    "run_right",
-    "source",
-    "preview",
-    "*_draft",
-    "*_tmp",
-    "walk_left",
-    "walk_right",
-    "run_left",
-    "run_right",
-    "source",
-    "preview",
-    "*_draft",
-    "*_tmp",
-    "walk_left",
-    "walk_right",
-    "run_left",
-    "run_right",
-    "source",
-    "preview",
-    "*_draft",
-    "*_tmp",
-    "walk_left",
-    "walk_right",
-    "run_left",
     "run_right"
   ],
   "unknown_animation_default": {
@@ -123,7 +75,7 @@
     "duration_s": 0,
     "native_facing": "",
     "frames": 0,
-    "description": "Auto-added animation discovered from animations/\u003cact\u003e.png. Tune this entry in the pet-specific pet.json when needed."
+    "description": "Auto-added animation discovered from animations/<act>.png. Tune this entry in the pet-specific pet.json when needed."
   },
   "animations": {
     "angry": {
@@ -137,7 +89,7 @@
       "duration_s": 0,
       "native_facing": "",
       "frames": 9,
-      "description": "TÃƒÂ¡Ã‚Â»Ã‚Â©c giÃƒÂ¡Ã‚ÂºÃ‚Â­n. Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã‚Â©ng yÃƒÆ’Ã‚Âªn hoÃƒÂ¡Ã‚ÂºÃ‚Â·c Ãƒâ€žÃ¢â‚¬Ëœang bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ kÃƒÆ’Ã‚Â©o."
+      "description": "Angry reaction. Stationary emotion used during drag or interaction."
     },
     "cry": {
       "file": "cry.png",
@@ -150,7 +102,7 @@
       "duration_s": 0,
       "native_facing": "",
       "frames": 9,
-      "description": "KhÃƒÆ’Ã‚Â³c. Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã‚Â©ng yÃƒÆ’Ã‚Âªn hoÃƒÂ¡Ã‚ÂºÃ‚Â·c Ãƒâ€žÃ¢â‚¬Ëœang bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ kÃƒÆ’Ã‚Â©o."
+      "description": "Crying reaction. Stationary emotion used during drag or interaction."
     },
     "happy": {
       "file": "happy.png",
@@ -163,7 +115,7 @@
       "duration_s": 0,
       "native_facing": "",
       "frames": 9,
-      "description": "Vui/cÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âi. Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã‚Â©ng yÃƒÆ’Ã‚Âªn."
+      "description": "Happy reaction. Stationary emotion used for click feedback."
     },
     "idle": {
       "file": "idle.png",
@@ -176,7 +128,7 @@
       "duration_s": 0,
       "native_facing": "",
       "frames": 9,
-      "description": "Ãƒâ€žÃ‚ÂÃƒÂ¡Ã‚Â»Ã‚Â©ng yÃƒÆ’Ã‚Âªn, blink/thÃƒÂ¡Ã‚Â»Ã…Â¸ nhÃƒÂ¡Ã‚ÂºÃ‚Â¹."
+      "description": "Idle standing animation."
     },
     "run": {
       "file": "run.png",
@@ -189,7 +141,7 @@
       "duration_s": 0,
       "native_facing": "right",
       "frames": 9,
-      "description": "Di chuyÃƒÂ¡Ã‚Â»Ã†â€™n nhanh hÃƒâ€ Ã‚Â¡n walk, dÃƒÆ’Ã‚Â¹ng khi target xa."
+      "description": "Fast horizontal movement used for distant targets."
     },
     "sleepy": {
       "file": "sleepy.png",
@@ -202,7 +154,7 @@
       "duration_s": 0,
       "native_facing": "",
       "frames": 9,
-      "description": "BuÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“n ngÃƒÂ¡Ã‚Â»Ã‚Â§/ngÃƒÆ’Ã‚Â¡p."
+      "description": "Sleepy or yawning idle state."
     },
     "walk": {
       "file": "walk.png",
@@ -215,7 +167,7 @@
       "duration_s": 0,
       "native_facing": "right",
       "frames": 9,
-      "description": "Ãƒâ€žÃ‚Âi ngang chÃƒÂ¡Ã‚ÂºÃ‚Â­m. ChÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° dÃƒÆ’Ã‚Â¹ng khi pet Ãƒâ€žÃ¢â‚¬Ëœang tÃƒÂ¡Ã‚Â»Ã‚Â± di chuyÃƒÂ¡Ã‚Â»Ã†â€™n."
+      "description": "Slow horizontal movement while roaming."
     },
     "wave": {
       "file": "wave.png",
@@ -228,7 +180,7 @@
       "duration_s": 0,
       "native_facing": "",
       "frames": 9,
-      "description": "VÃƒÂ¡Ã‚ÂºÃ‚Â«y tay/chÃƒÆ’Ã‚Â o."
+      "description": "Wave reaction used after drag or interaction."
     }
   }
 }

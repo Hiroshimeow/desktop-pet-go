@@ -26,7 +26,7 @@ Chạy pet:
 
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
-.\pet-lite.exe -assets ..\assets -pet pet1
+.\pet-lite.exe -assets ..\assets -pet pet5
 ```
 
 Build/test:

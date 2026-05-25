@@ -1,20 +1,45 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
-func TestAutoDiscoverAndSyncedPetManifest(t *testing.T) {
-	profile, _, err := loadRuntimeProfile("", "..\\assets", "pet1")
+const testAssetsRoot = "..\\assets"
+const testPetID = "pet5"
+
+func testManifest(t *testing.T) PetManifest {
+	t.Helper()
+	manifest, err := LoadPetManifestMerged(filepath.Join(testAssetsRoot, "pet.json"), filepath.Join(testAssetsRoot, "pets", testPetID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(profile.ActivePets) < 1 {
-		t.Fatalf("expected at least 1 discovered pet group, got %d", len(profile.ActivePets))
-	}
-	manifest, err := LoadPetManifestSynced("..\\assets\\pet.json", "..\\assets\\pets\\pet1")
+	return manifest
+}
+
+func TestAutoDiscoverAndMergedPetManifest(t *testing.T) {
+	profile, _, err := loadRuntimeProfile("", testAssetsRoot, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ID != "pet1" {
+	if len(profile.ActivePets) != 1 {
+		t.Fatalf("expected one default discovered pet group, got %d", len(profile.ActivePets))
+	}
+	if profile.ActivePets[0].PetID != testPetID {
+		t.Fatalf("expected default pet %q, got %q", testPetID, profile.ActivePets[0].PetID)
+	}
+
+	allProfile, _, err := loadRuntimeProfile("", testAssetsRoot, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allProfile.ActivePets) < 1 {
+		t.Fatalf("expected at least 1 discovered pet group, got %d", len(allProfile.ActivePets))
+	}
+
+	manifest := testManifest(t)
+	if manifest.ID != testPetID {
 		t.Fatalf("bad manifest id %q", manifest.ID)
 	}
 	if manifest.AnimationDir != "animations" {
@@ -28,11 +53,39 @@ func TestAutoDiscoverAndSyncedPetManifest(t *testing.T) {
 	}
 }
 
-func TestLoadSpriteStorePerPet(t *testing.T) {
-	manifest, err := LoadPetManifestSynced("..\\assets\\pet.json", "..\\assets\\pets\\pet1")
-	if err != nil {
-		t.Fatal(err)
+func TestUnknownPetSelectionReturnsAvailablePets(t *testing.T) {
+	_, _, err := loadRuntimeProfile("", testAssetsRoot, "missing-pet")
+	if err == nil {
+		t.Fatal("expected missing pet selection to fail")
 	}
+	msg := err.Error()
+	if !strings.Contains(msg, "missing-pet") || !strings.Contains(msg, testPetID) || !strings.Contains(msg, "available=") {
+		t.Fatalf("error should include missing id and available pets, got %q", msg)
+	}
+}
+
+func TestManifestDefaultsAndBlacklistAreIdempotent(t *testing.T) {
+	manifest := testManifest(t)
+	if manifest.Scale <= 0 {
+		t.Fatalf("scale default was not normalized")
+	}
+	if manifest.Columns <= 0 {
+		t.Fatalf("columns default was not normalized")
+	}
+	if manifest.Motion.AutoRoamChance <= 0 {
+		t.Fatalf("motion.auto_roam_chance default was not normalized")
+	}
+	seen := map[string]bool{}
+	for _, item := range manifest.ActBlacklist {
+		if seen[item] {
+			t.Fatalf("duplicate blacklist item %q", item)
+		}
+		seen[item] = true
+	}
+}
+
+func TestLoadSpriteStorePerPet(t *testing.T) {
+	manifest := testManifest(t)
 	store, err := LoadSpriteStore(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -47,10 +100,7 @@ func TestLoadSpriteStorePerPet(t *testing.T) {
 }
 
 func TestPetMovementAndDragEmotionAreSeparated(t *testing.T) {
-	manifest, err := LoadPetManifestSynced("..\\assets\\pet.json", "..\\assets\\pets\\pet1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	manifest := testManifest(t)
 	store, err := LoadSpriteStore(manifest)
 	if err != nil {
 		t.Fatal(err)

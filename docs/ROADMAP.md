@@ -11,7 +11,7 @@ Hiện trạng:
 - Có `assets/pet.json` làm config chung.
 - Có `assets/pets/<pet_id>/pet.json` làm config riêng.
 - Có auto-discovery pet folder.
-- Có chọn pet bằng `-pet pet1`, `-pet pet1,pet2`, `-pet all`.
+- Có chọn pet bằng `-pet pet5`, `-pet all`, `-pet all`.
 - Có import sheet 8x5 thành per-act animation strip.
 - Có `act_blacklist`.
 - Có movement ngang, không đi chéo.
@@ -33,7 +33,7 @@ Task đề xuất:
 Definition of done:
 
 - `go test ./...` pass.
-- `pet-lite.exe -assets ..\assets -pet pet1 -catalog` pass.
+- `pet-lite.exe -assets ..\assets -pet pet5 -catalog` pass.
 - Click/drag/right-click 30 lần không force close.
 - Không có case pet vừa khóc vừa tự đi.
 
@@ -53,7 +53,7 @@ Task đề xuất:
 Definition of done:
 
 - Một lệnh validate được toàn bộ `assets/pets/*`.
-- Có contact sheet để review nhanh pet1/pet2/pet3.
+- Có contact sheet để review nhanh pet5 và pet tự thêm.
 - Có tool sửa thứ tự frame walk/run mà không cần generate lại ảnh.
 
 ## Phase 3: Control panel
@@ -90,7 +90,7 @@ API event tối thiểu:
 
 ```json
 {
-  "pet": "pet1",
+  "pet": "pet5",
   "event": "music_start",
   "animation": "dance",
   "duration_ms": 5000

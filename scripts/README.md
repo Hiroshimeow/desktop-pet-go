@@ -122,8 +122,8 @@ Dùng `--acts` để map lại 8 hàng:
 
 ```powershell
 py .\scripts\import_pet_sheet.py `
-  --src .\assets\pet1.1.png `
-  --pet pet1 `
+  --src .\assets\pet5.1.png `
+  --pet pet5 `
   --acts surprised,shy,thinking,cheer,scared,dizzy,dance,sit_idle `
   --overwrite `
   --remove-bg
@@ -152,8 +152,8 @@ Tool mới mặc định crop theo geometry ổn định của sheet 5x8 rồi n
 
 ```powershell
 cd E:\git-project\desktop-pet-lite
-py .\scripts\import_pet_sheet.py --src .\assets\pet1.png --pet pet1 --overwrite --remove-bg
-py .\scripts\import_pet_sheet.py --src .\assets\pet1.1.png --pet pet1 --acts surprised,shy,thinking,cheer,scared,dizzy,dance,sit_idle --overwrite --remove-bg
+py .\scripts\import_pet_sheet.py --src .\assets\pet5.png --pet pet5 --overwrite --remove-bg
+py .\scripts\import_pet_sheet.py --src .\assets\pet5.1.png --pet pet5 --acts surprised,shy,thinking,cheer,scared,dizzy,dance,sit_idle --overwrite --remove-bg
 py .\scripts\import_pet_sheet.py --src .\assets\pet2.png --pet pet2 --overwrite --remove-bg
 py .\scripts\import_pet_sheet.py --src .\assets\pet3.png --pet pet3 --overwrite --remove-bg
 ```
@@ -162,5 +162,5 @@ Sau khi import, chạy:
 
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
-.\pet-lite.exe -assets ..\assets -pet pet1 -catalog
+.\pet-lite.exe -assets ..\assets -pet pet5 -catalog
 ```

@@ -55,7 +55,7 @@ Project hướng tới một desktop pet runtime trên Windows 11 với các đ�
 Khi chạy:
 
 ```powershell
-pet-lite.exe -assets ..\assets -pet pet1,pet2
+pet-lite.exe -assets ..\assets -pet all
 ```
 
 Flow:
@@ -67,7 +67,7 @@ parse flags
   -> discover assets/pets/*
   -> filter by -pet
   -> for each selected pet:
-       LoadPetManifestSynced(default, pet_dir)
+       LoadPetManifestMerged(default, pet_dir)
        LoadSpriteStore(manifest)
        NewPet(...)
        create layered window
@@ -203,7 +203,7 @@ Host app gửi:
 
 ```json
 {
-  "pet": "pet1",
+  "pet": "pet5",
   "action": "play",
   "animation": "dance",
   "duration_ms": 5000
@@ -214,7 +214,7 @@ Runtime gửi lại:
 
 ```json
 {
-  "pet": "pet1",
+  "pet": "pet5",
   "event": "right_click",
   "x": 100,
   "y": 800

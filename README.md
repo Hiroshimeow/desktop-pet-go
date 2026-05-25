@@ -17,15 +17,26 @@ Desktop Pet Lite là runtime pet Windows viết bằng Go thuần Win32. Python 
 
 ## Chạy nhanh
 
+Linux dev workflow:
+
+```bash
+cd go-lite
+go test ./...
+GOOS=windows GOARCH=amd64 go build -o pet-lite.exe .
+```
+
+Linux dùng để test core và cross-compile. GUI trong suốt vẫn là Win32-only, cần smoke test trên Windows thật.
+
+
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
-.\pet-lite.exe -assets ..\assets -pet pet1
+.\pet-lite.exe -assets ..\assets -pet pet5
 ```
 
 Chọn nhiều pet:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1,pet2
+.\pet-lite.exe -assets ..\assets -pet all
 ```
 
 Chỉnh kích cỡ pet trong `pet.json`, không cần truyền lệnh mỗi lần. Ví dụ global default 50%:
@@ -40,7 +51,7 @@ Chỉnh kích cỡ pet trong `pet.json`, không cần truyền lệnh mỗi lầ
 Nếu muốn pet riêng khác kích cỡ, đặt trong file riêng của pet:
 
 ```json
-// E:\git-project\desktop-pet-lite\assets\pets\pet4\pet.json
+// E:\git-project\desktop-pet-lite\assets\pets\pet5\pet.json
 {
   "scale": 0.35
 }
@@ -66,13 +77,13 @@ Chạy toàn bộ pet đã import:
 Tạo nhiều instance của pet đầu tiên:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1 -count 3
+.\pet-lite.exe -assets ..\assets -pet pet5 -count 3
 ```
 
 Liệt kê animation được load:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1 -catalog
+.\pet-lite.exe -assets ..\assets -pet pet5 -catalog
 ```
 
 ## Build/test
@@ -96,8 +107,8 @@ go build -ldflags='-s -w -H=windowsgui' -o pet-lite.exe .
 assets/
   pet.json                    # cấu hình mặc định dùng chung
   pets/
-    pet1/
-      pet.json                # cấu hình riêng, tự sync thêm act từ assets/pet.json
+    pet5/
+      pet.json                # cấu hình riêng, được merge in-memory với assets/pet.json
       animations/
         idle.png
         walk.png
@@ -117,9 +128,9 @@ Runtime tự flip theo `native_facing`, nên không cần tạo `walk_left.png`/
 
 ## Đồng bộ pet.json
 
-`assets/pet.json` là nguồn cấu hình chung. Khi app mở, mỗi `assets/pets/<pet_id>/pet.json` được đồng bộ với config chung, sau đó scan thư mục `animations`.
+`assets/pet.json` là nguồn cấu hình chung. Khi app mở, manifest được merge trong bộ nhớ với config chung, sau đó scan thư mục `animations`; runtime/catalog bình thường không tự ghi lại `pet.json`.
 
-Nếu thêm `fly.png` hoặc `fight.png`, app tự thêm act tương ứng với params default. Cache `.petcache.json` dùng hash/signature của default json, pet json và danh sách animation để bỏ qua sync khi không có thay đổi.
+Nếu thêm `fly.png` hoặc `fight.png`, runtime/catalog nhận diện act tương ứng trong manifest in-memory với params default. Để persist metadata, chỉnh `pet.json` thủ công hoặc dùng sync path/tool explicit khi được expose; runtime/catalog bình thường không ghi `pet.json` hoặc `.petcache.json`.
 
 ## Interaction
 
@@ -130,7 +141,9 @@ Thả chuột trái: pet chạy `wave` nếu có.
 Chuột phải: pet chạy `right_click`, mặc định là `thinking`. Có thể gắn command ngoài:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1 -right-cmd "Start-Process notepad"
+.\pet-lite.exe -assets ..\assets -pet pet5 -right-cmd "Start-Process notepad"
 ```
 
 Click trái cũng có thể gọi hook ngoài bằng `-click-cmd`, còn animation khi giữ chuột vẫn theo drag emotion.
+
+`-click-cmd` và `-right-cmd` chỉ dành cho command local đáng tin cậy. Không nhận shell command từ asset bundle không tin cậy; nếu sau này cần hook từ asset, nên dùng allowlist action thay vì command tự do.

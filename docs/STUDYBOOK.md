@@ -31,7 +31,7 @@ Yêu cầu sản phẩm:
 Go runtime
 ├─ load config
 ├─ discover selected pets
-├─ sync per-pet manifest
+├─ merge per-pet manifest in-memory
 ├─ load sprite strips
 ├─ create transparent layered windows
 ├─ update pet state
@@ -86,7 +86,7 @@ Flag quan trọng:
 
 ```text
 -assets    đường dẫn assets root
--pet       pet1 hoặc pet1,pet2 hoặc all
+-pet       pet5 hoặc all hoặc all
 -count     số instance cho pet đầu tiên
 -scale     override scale
 -catalog   in animation catalog rồi thoát
@@ -111,7 +111,7 @@ Khái niệm quan trọng:
 locomotion = true   -> animation được phép di chuyển pet
 locomotion = false  -> emotion/state/reaction, không tự di chuyển
 native_facing       -> hướng gốc của sprite để runtime flip
-act_blacklist       -> danh sách act không tự add vào manifest
+act_blacklist       -> danh sách act không auto-scan vào manifest in-memory
 ```
 
 ### `discovery.go`
@@ -123,8 +123,8 @@ Vai trò:
 - load pet-specific `pet.json`;
 - merge config;
 - scan animation folder;
-- auto-add animation mới;
-- cache `.petcache.json`;
+- auto-add animation mới vào manifest in-memory;
+- không ghi `.petcache.json` trong runtime/catalog path mặc định;
 - sanitize interaction.
 
 Điểm đáng chú ý: app không chạy tất cả pet mặc định nữa. Nó discover được tất cả, nhưng chỉ chạy pet được chọn bằng `-pet`.
@@ -171,7 +171,7 @@ Vai trò hiện tại: nền cho tích hợp command/hook. Tương lai có thể
 Vai trò:
 
 - test auto-discover;
-- test manifest sync;
+- test manifest merge in-memory;
 - test sprite store;
 - test movement không đi chéo;
 - test drag emotion không dùng locomotion.
@@ -193,7 +193,7 @@ Tool hiện tại chọn compromise:
 - optional `--remove-bg` bằng border flood-fill;
 - không dùng threshold toàn ảnh để tránh khoét lỗ bên trong nhân vật.
 
-## 6. Manifest và auto-sync
+## 6. Manifest và merge in-memory
 
 Config chung:
 
@@ -219,7 +219,7 @@ Nếu có file mới:
 assets/pets/pet2/animations/fly.png
 ```
 
-Runtime tự thêm:
+Runtime nhận diện trong manifest in-memory:
 
 ```json
 "fly": {
@@ -231,7 +231,7 @@ Runtime tự thêm:
 }
 ```
 
-Sau đó developer chỉnh lại nếu cần:
+Sau đó developer chỉnh `pet.json` thủ công nếu cần persist metadata:
 
 ```json
 "fly": {
@@ -256,7 +256,7 @@ run_left.png
 old_draft.png
 ```
 
-Nếu runtime tự add hết, state machine có thể chọn nhầm animation. `act_blacklist` giải quyết bằng pattern đơn giản:
+Nếu auto-scan nhận hết file rác, state machine có thể chọn nhầm animation. `act_blacklist` giải quyết bằng pattern đơn giản:
 
 ```json
 ["source", "preview", "*_draft", "*_tmp", "walk_left", "walk_right", "run_left", "run_right"]
@@ -311,7 +311,7 @@ Ví dụ event:
 
 ```json
 {
-  "pet": "pet1",
+  "pet": "pet5",
   "event": "music_start",
   "animation": "dance",
   "duration_ms": 5000

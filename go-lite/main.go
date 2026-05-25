@@ -12,8 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
-	"sort"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -85,6 +83,8 @@ var (
 	pCreateCompatibleDC  = gdi32.NewProc("CreateCompatibleDC")
 	pCreateDIBSection    = gdi32.NewProc("CreateDIBSection")
 	pSelectObject        = gdi32.NewProc("SelectObject")
+	pDeleteObject        = gdi32.NewProc("DeleteObject")
+	pDeleteDC            = gdi32.NewProc("DeleteDC")
 	pGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 )
 
@@ -116,6 +116,7 @@ type WindowPet struct {
 	Pet         *Pet
 	Bitmap      uintptr
 	DC          uintptr
+	OldBitmap   uintptr
 	Bits        uintptr
 	Drag        bool
 	PendingLeft bool
@@ -171,7 +172,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	profilePath := flag.String("profile", "", "optional profile json; empty means auto-discover selected assets/pets")
 	assetsPath := flag.String("assets", "..\\assets", "assets root containing pet.json and pets/*")
-	petSelect := flag.String("pet", "pet1", "comma-separated pet ids to run, e.g. pet1,pet2; use all to run every discovered pet")
+	petSelect := flag.String("pet", "", "comma-separated pet ids to run, e.g. pet5; omit to run first discovered pet; use all to run every discovered pet")
 	petsOverride := flag.Int("count", 0, "override instance count for first selected pet")
 	scaleOverride := flag.Float64("scale", 0, "optional temporary scale override; default scale is read from pet.json")
 	catalog := flag.Bool("catalog", false, "print loaded pet/animation catalog")
@@ -216,7 +217,7 @@ func (a *App) printCatalogOnly(profileBase string, assetsPath string) error {
 		var manifest PetManifest
 		var err error
 		if active.Manifest == "" {
-			manifest, err = LoadPetManifestSynced(defaultManifestPath, filepath.Dir(manifestPath))
+			manifest, err = LoadPetManifestMerged(defaultManifestPath, filepath.Dir(manifestPath))
 		} else {
 			manifest, err = LoadPetManifest(manifestPath)
 		}
@@ -251,7 +252,7 @@ func (a *App) createWindows(profileBase string, assetsPath string, petsOverride 
 		var manifest PetManifest
 		var err error
 		if active.Manifest == "" {
-			manifest, err = LoadPetManifestSynced(defaultManifestPath, filepath.Dir(manifestPath))
+			manifest, err = LoadPetManifestMerged(defaultManifestPath, filepath.Dir(manifestPath))
 		} else {
 			manifest, err = LoadPetManifest(manifestPath)
 		}
@@ -308,55 +309,6 @@ func (a *App) createWindows(profileBase string, assetsPath string, petsOverride 
 	return nil
 }
 
-func loadRuntimeProfile(profilePath, assetsPath string, petSelect string) (Profile, string, error) {
-	if profilePath != "" {
-		p, err := LoadProfile(profilePath)
-		return p, filepath.Dir(profilePath), err
-	}
-	petsRoot := filepath.Join(assetsPath, "pets")
-	petDirs, err := DiscoverPetDirs(petsRoot)
-	if err != nil {
-		return Profile{}, "", err
-	}
-	profile := Profile{Schema: 2, BaseDir: "."}
-	selected := parsePetSelection(petSelect)
-	for _, petDir := range petDirs {
-		id := filepath.Base(petDir)
-		if !selected["all"] && !selected[id] {
-			continue
-		}
-		profile.ActivePets = append(profile.ActivePets, ActivePetConfig{
-			ID:        id,
-			Name:      id,
-			PetID:     id,
-			Enabled:   true,
-			Count:     1,
-			Scale:     0,
-			Home:      "bottom",
-			AutoRoam:  true,
-			AllowDrag: true,
-		})
-	}
-	if len(profile.ActivePets) == 0 {
-		return Profile{}, "", fmt.Errorf("no selected pets found in %s for -pet %q", petsRoot, petSelect)
-	}
-	return profile, ".", nil
-}
-
-func parsePetSelection(value string) map[string]bool {
-	out := map[string]bool{}
-	for _, part := range strings.Split(value, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out[part] = true
-		}
-	}
-	if len(out) == 0 {
-		out["pet1"] = true
-	}
-	return out
-}
-
 func initLog() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 	exePath, err := os.Executable()
@@ -372,23 +324,6 @@ func initLog() {
 	}
 	log.SetOutput(os.Stderr)
 	log.Printf("failed to open log file %s: %v", logPath, err)
-}
-
-func printCatalog(m PetManifest) {
-	for _, name := range sortedAnimationNames(m.Animations) {
-		if a, ok := m.Animations[name]; ok {
-			fmt.Printf("pet=%s anim=%s file=%s frames=%d fps=%d locomotion=%v speed=%.0f desc=%s\n", m.ID, name, a.File, frameCountOf(m, a), a.FPS, a.Locomotion, a.SpeedPxS, a.Description)
-		}
-	}
-}
-
-func sortedAnimationNames(anims map[string]AnimationDef) []string {
-	names := make([]string, 0, len(anims))
-	for name := range anims {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 func (wp *WindowPet) initBitmap(w, h int) error {
@@ -407,9 +342,33 @@ func (wp *WindowPet) initBitmap(w, h int) error {
 	if hbm == 0 {
 		return err
 	}
-	pSelectObject.Call(dc, hbm)
-	wp.DC, wp.Bitmap, wp.Bits = dc, hbm, bits
+	old, _, err := pSelectObject.Call(dc, hbm)
+	if old == 0 {
+		pDeleteObject.Call(hbm)
+		pDeleteDC.Call(dc)
+		return err
+	}
+	wp.DC, wp.Bitmap, wp.OldBitmap, wp.Bits = dc, hbm, old, bits
 	return nil
+}
+
+func (wp *WindowPet) Destroy() {
+	if wp == nil {
+		return
+	}
+	if wp.DC != 0 && wp.OldBitmap != 0 {
+		pSelectObject.Call(wp.DC, wp.OldBitmap)
+		wp.OldBitmap = 0
+	}
+	if wp.Bitmap != 0 {
+		pDeleteObject.Call(wp.Bitmap)
+		wp.Bitmap = 0
+	}
+	if wp.DC != 0 {
+		pDeleteDC.Call(wp.DC)
+		wp.DC = 0
+	}
+	wp.Bits = 0
 }
 
 func (a *App) findPet(hwnd uintptr) *WindowPet {
@@ -727,6 +686,7 @@ func (a *App) removePetWindow(hwnd uintptr) int {
 	for i, p := range a.Pets {
 		if p.HWND == hwnd {
 			log.Printf("remove window hwnd=%d pet=%s", hwnd, p.Pet.InstanceID)
+			p.Destroy()
 			a.Pets = append(a.Pets[:i], a.Pets[i+1:]...)
 			return len(a.Pets)
 		}

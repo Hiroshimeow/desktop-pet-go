@@ -141,8 +141,8 @@ Khi runtime auto-discover rồi chạy tất cả pet, user không kiểm soát 
 
 ### Quyết định
 
-- Mặc định `-pet pet1`.
-- Chọn nhiều pet bằng `-pet pet1,pet2`.
+- Mặc định bỏ `-pet` để chọn pet đầu tiên discover được.
+- Chọn nhiều pet bằng `-pet all`.
 - Chỉ khi user muốn mới dùng `-pet all`.
 
 ### Bài học
@@ -210,9 +210,9 @@ Host app / AI service -> event -> pet runtime -> animation/effect
 Ví dụ:
 
 ```json
-{"event":"music_start","pet":"pet1","animation":"dance"}
-{"event":"tts_start","pet":"pet1","animation":"thinking"}
-{"event":"api_error","pet":"pet1","animation":"dizzy"}
+{"event":"music_start","pet":"pet5","animation":"dance"}
+{"event":"tts_start","pet":"pet5","animation":"thinking"}
+{"event":"api_error","pet":"pet5","animation":"dizzy"}
 ```
 
 ### Bài học
@@ -286,4 +286,4 @@ Project đang đi đúng hướng khi tách thành ba layer:
 2. `assets/`: manifest + animation contract;
 3. `go-lite/`: runtime Win32 nhẹ.
 
-Các lỗi đã gặp chủ yếu đến từ việc boundary chưa rõ: config trùng, asset mix, auto-scan quá rộng, emotion/movement lẫn nhau. Các thay đổi gần đây đang đưa project về hướng có thể mở rộng: pet độc lập, chọn pet rõ, sync config tự động, và integration qua event thay vì nhúng AI trực tiếp vào runtime.
+Các lỗi đã gặp chủ yếu đến từ việc boundary chưa rõ: config trùng, asset mix, auto-scan quá rộng, emotion/movement lẫn nhau. Các thay đổi gần đây đang đưa project về hướng có thể mở rộng: pet độc lập, chọn pet rõ, merge config in-memory, và integration qua event thay vì nhúng AI trực tiếp vào runtime.

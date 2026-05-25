@@ -115,13 +115,16 @@ func LoadPetManifest(path string) (PetManifest, error) {
 		return PetManifest{}, err
 	}
 	m.BaseDir = filepath.Dir(path)
-	if err := m.Validate(); err != nil {
+	if err := m.NormalizeAndValidate(); err != nil {
 		return PetManifest{}, err
 	}
 	return m, nil
 }
 
-func (m PetManifest) Validate() error {
+func (m *PetManifest) NormalizeAndValidate() error {
+	if m == nil {
+		return fmt.Errorf("pet manifest is nil")
+	}
 	if m.ID == "" {
 		return fmt.Errorf("pet manifest missing id")
 	}
@@ -158,6 +161,11 @@ func (m PetManifest) Validate() error {
 		m.Motion.AutoRoamChance = 35
 	}
 	return nil
+}
+
+func (m PetManifest) Validate() error {
+	copy := m
+	return (&copy).NormalizeAndValidate()
 }
 
 func (m PetManifest) AnimationPath(anim AnimationDef) string {

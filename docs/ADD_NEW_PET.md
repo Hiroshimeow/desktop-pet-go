@@ -78,10 +78,10 @@ Nếu catalog in ra các act đúng, pet đã được runtime nhận.
 .\pet-lite.exe -assets ..\assets -pet pet4
 ```
 
-Chạy pet4 cùng pet1:
+Chạy pet mới cùng pet5:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1,pet4
+.\pet-lite.exe -assets ..\assets -pet pet5,pet_new
 ```
 
 Chạy tất cả pet:
@@ -141,7 +141,7 @@ assets\pets\pet4\animations\dance.png
 assets\pets\pet4\animations\fly.png
 ```
 
-Khi mở app, runtime sẽ tự thêm `dance`, `fly` vào `assets/pets/pet4/pet.json` với params default nếu các act này không nằm trong `act_blacklist`.
+Khi mở app, runtime sẽ nhận diện `dance`, `fly` trong manifest in-memory với params default nếu các act này không nằm trong `act_blacklist`. Để persist metadata, chỉnh `assets/pets/pet4/pet.json` thủ công hoặc chạy sync manifest explicit khi được expose.
 
 Sau đó chỉnh lại metadata nếu cần:
 

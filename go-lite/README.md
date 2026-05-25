@@ -6,11 +6,12 @@ Go/Win32 desktop pet runner. Đây là runtime chính. Python đã bị loại k
 
 ```text
 E:\git-project\desktop-pet-lite\go-lite\pet-lite.exe
-E:\git-project\desktop-pet-lite\animations.json
-E:\git-project\desktop-pet-lite\assets\animations\*.png
+E:\git-project\desktop-pet-lite\assets\pet.json
+E:\git-project\desktop-pet-lite\assets\pets\<pet_id>\pet.json
+E:\git-project\desktop-pet-lite\assets\pets\<pet_id>\animations\*.png
 ```
 
-Mỗi file PNG trong `assets\animations` là đúng 1 animation, dễ thay thế độc lập.
+Mỗi file PNG trong `assets\pets\<pet_id>\animations` là đúng 1 animation, dễ thay thế độc lập. `animations.json` không nằm trong flow runtime mặc định.
 
 ## Asset format
 
@@ -68,7 +69,7 @@ sit_idle.png    ngồi nghỉ
 
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
-.\pet-lite.exe -assets ..\assets -pet pet4
+.\pet-lite.exe -assets ..\assets -pet pet5
 ```
 
 Kích cỡ pet được đọc từ `pet.json`, không cần truyền lệnh mỗi lần.
@@ -85,7 +86,7 @@ Global default:
 Override riêng từng pet:
 
 ```json
-// E:\git-project\desktop-pet-lite\assets\pets\pet4\pet.json
+// E:\git-project\desktop-pet-lite\assets\pets\pet5\pet.json
 {
   "scale": 0.35
 }
@@ -103,13 +104,13 @@ Nếu asset là `256x256`:
 Có thể kết hợp với nhiều pet:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1,pet4
+.\pet-lite.exe -assets ..\assets -pet pet5
 ```
 
 Hoặc nhiều instance của pet đầu tiên:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet4 -count 3
+.\pet-lite.exe -assets ..\assets -pet pet5 -count 3
 ```
 
 `-scale` vẫn còn nhưng chỉ dùng để test tạm thời. Runtime chuẩn nên để scale trong `pet.json`.

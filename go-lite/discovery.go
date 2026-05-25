@@ -39,40 +39,53 @@ func DiscoverPetDirs(petsRoot string) ([]string, error) {
 	return out, nil
 }
 
+func LoadPetManifestMerged(defaultPath, petDir string) (PetManifest, error) {
+	return loadPetManifestMerged(defaultPath, petDir, false)
+}
+
 func LoadPetManifestSynced(defaultPath, petDir string) (PetManifest, error) {
+	return loadPetManifestMerged(defaultPath, petDir, true)
+}
+
+func loadPetManifestMerged(defaultPath, petDir string, writeBack bool) (PetManifest, error) {
 	base, err := readManifestRaw(defaultPath)
 	if err != nil {
 		return PetManifest{}, err
 	}
 	base.BaseDir = filepath.Dir(defaultPath)
 	petPath := filepath.Join(petDir, "pet.json")
-	if _, err := os.Stat(petPath); os.IsNotExist(err) {
-		m := mergeForPet(base, PetManifest{}, petDir)
-		if err := scanAndSyncAnimations(&m, base); err != nil {
+	var pet PetManifest
+	if _, err := os.Stat(petPath); err != nil {
+		if !os.IsNotExist(err) {
 			return PetManifest{}, err
 		}
-		if err := writeManifest(petPath, m); err != nil {
+	} else {
+		pet, err = readManifestRaw(petPath)
+		if err != nil {
 			return PetManifest{}, err
 		}
-		_ = writeCache(defaultPath, petPath, m)
-		return finalizedManifest(m, petDir)
 	}
-	pet, err := readManifestRaw(petPath)
-	if err != nil {
-		return PetManifest{}, err
-	}
-	needsSync, _ := shouldSync(defaultPath, petPath, petDir)
 	m := mergeForPet(base, pet, petDir)
 	if err := scanAndSyncAnimations(&m, base); err != nil {
 		return PetManifest{}, err
 	}
-	if needsSync {
-		if err := writeManifest(petPath, m); err != nil {
-			return PetManifest{}, err
-		}
-		_ = writeCache(defaultPath, petPath, m)
+	m, err = finalizedManifest(m, petDir)
+	if err != nil {
+		return PetManifest{}, err
 	}
-	return finalizedManifest(m, petDir)
+	if writeBack {
+		needsSync := true
+		if _, err := os.Stat(petPath); err == nil {
+			needsSync, _ = shouldSync(defaultPath, petPath, petDir)
+		}
+		if needsSync {
+			if err := writeManifest(petPath, m); err != nil {
+				return PetManifest{}, err
+			}
+			_ = writeCache(defaultPath, petPath, m)
+		}
+	}
+	return m, nil
 }
 
 func readManifestRaw(path string) (PetManifest, error) {
@@ -123,8 +136,7 @@ func mergeForPet(base, pet PetManifest, petDir string) PetManifest {
 	}
 	m.Motion = mergeMotion(base.Motion, pet.Motion)
 	m.Interactions = mergeInteractions(base.Interactions, pet.Interactions)
-	m.ActBlacklist = append([]string{}, base.ActBlacklist...)
-	m.ActBlacklist = append(m.ActBlacklist, pet.ActBlacklist...)
+	m.ActBlacklist = dedupeStrings(append(append([]string{}, base.ActBlacklist...), pet.ActBlacklist...))
 	m.UnknownAnimationDefault = mergeAnim(base.UnknownAnimationDefault, pet.UnknownAnimationDefault)
 	m.Animations = map[string]AnimationDef{}
 	for k, v := range base.Animations {
@@ -145,7 +157,8 @@ func finalizedManifest(m PetManifest, petDir string) (PetManifest, error) {
 	if m.Name == "" {
 		m.Name = m.ID
 	}
-	if err := m.Validate(); err != nil {
+	m.ActBlacklist = dedupeStrings(m.ActBlacklist)
+	if err := m.NormalizeAndValidate(); err != nil {
 		return PetManifest{}, err
 	}
 	return m, nil
@@ -356,7 +369,21 @@ func writeManifest(path string, m PetManifest) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func mergeMotion(a, b MotionConfig) MotionConfig {
@@ -377,6 +404,7 @@ func mergeMotion(a, b MotionConfig) MotionConfig {
 	}
 	return a
 }
+
 func mergeInteractions(a, b map[string]InteractionAction) map[string]InteractionAction {
 	out := map[string]InteractionAction{}
 	for k, v := range a {
@@ -387,6 +415,7 @@ func mergeInteractions(a, b map[string]InteractionAction) map[string]Interaction
 	}
 	return out
 }
+
 func mergeAnim(a, b AnimationDef) AnimationDef {
 	if b.File != "" {
 		a.File = b.File
@@ -423,6 +452,21 @@ func mergeAnim(a, b AnimationDef) AnimationDef {
 	}
 	return a
 }
+
+func dedupeStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func firstNonEmpty(v ...string) string {
 	for _, s := range v {
 		if s != "" {

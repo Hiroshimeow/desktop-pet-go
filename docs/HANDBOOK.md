@@ -14,7 +14,7 @@ Thiết kế hiện tại ưu tiên:
 - pet riêng có thể override bằng `assets/pets/<pet_id>/pet.json`;
 - không hard-code tên pet trong code;
 - chỉ chạy pet được chọn qua flag `-pet`;
-- animation mới trong folder `animations` được auto-sync vào pet json;
+- animation mới trong folder `animations` được scan vào manifest in-memory, không tự ghi pet json;
 - asset import/cắt sheet để riêng trong script Python.
 
 ## 2. Cấu trúc repo
@@ -25,20 +25,16 @@ E:\git-project\desktop-pet-lite
 ├─ LAST_UPDATE.md
 ├─ assets
 │  ├─ pet.json                  # default config chung
-│  ├─ pet1.png                  # source sheet gốc
-│  ├─ pet1.1.png                # source sheet phụ của pet1
-│  ├─ pet2.png
-│  ├─ pet3.png
+│  ├─ pet5.png                  # source sheet gốc
+│  ├─ pet5.1.png                # source sheet phụ của pet5
 │  └─ pets
-│     ├─ pet1
-│     │  ├─ pet.json            # config riêng đã sync
-│     │  ├─ .petcache.json      # cache fingerprint
+│     ├─ pet5
+│     │  ├─ pet.json            # config riêng, merge in-memory với default
 │     │  └─ animations
 │     │     ├─ idle.png
 │     │     ├─ walk.png
 │     │     └─ ...
-│     ├─ pet2
-│     └─ pet3
+│     └─ ...                   # pet khác sau khi user import thêm
 ├─ go-lite
 │  ├─ main.go
 │  ├─ config.go
@@ -59,13 +55,13 @@ Chạy một pet:
 
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
-.\pet-lite.exe -assets ..\assets -pet pet1
+.\pet-lite.exe -assets ..\assets -pet pet5
 ```
 
 Chạy nhiều pet:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1,pet2
+.\pet-lite.exe -assets ..\assets -pet all
 ```
 
 Chạy tất cả pet đã import:
@@ -77,13 +73,13 @@ Chạy tất cả pet đã import:
 Tạo nhiều instance của pet đầu tiên:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1 -count 3
+.\pet-lite.exe -assets ..\assets -pet pet5 -count 3
 ```
 
 In catalog animation rồi thoát:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1 -catalog
+.\pet-lite.exe -assets ..\assets -pet pet5 -catalog
 ```
 
 ## 4. Build và test
@@ -136,7 +132,7 @@ Mỗi pet có thể có:
 assets/pets/<pet_id>/pet.json
 ```
 
-Nếu pet json thiếu act/config, runtime merge từ `assets/pet.json`. Nếu có animation mới trong folder `animations`, runtime tự thêm vào `pet.json` của pet đó.
+Nếu pet json thiếu act/config, runtime merge từ `assets/pet.json` trong bộ nhớ. Nếu có animation mới trong folder `animations`, runtime nhận diện trong manifest in-memory; muốn lưu metadata thì chỉnh `pet.json` thủ công hoặc chạy sync explicit khi được expose.
 
 Ví dụ override tối thiểu:
 
@@ -150,21 +146,20 @@ Ví dụ override tối thiểu:
 }
 ```
 
-## 7. Cơ chế sync và cache
+## 7. Cơ chế merge manifest in-memory
 
-Khi app mở, runtime làm:
+Khi app mở, runtime/catalog bình thường làm:
 
 1. đọc `assets/pet.json`;
 2. đọc `assets/pets/<pet_id>/pet.json` nếu có;
-3. merge default vào pet config;
+3. merge default vào pet config trong bộ nhớ;
 4. scan `assets/pets/<pet_id>/animations/*.png`;
 5. bỏ qua act trong `act_blacklist`;
-6. thêm act mới vào pet config;
+6. thêm act mới vào manifest in-memory với default phù hợp;
 7. sanitize interaction nếu interaction trỏ tới animation không tồn tại;
-8. ghi lại `pet.json` nếu có thay đổi;
-9. ghi `.petcache.json`.
+8. không ghi `pet.json` hoặc `.petcache.json`.
 
-Cache không hash toàn bộ PNG mỗi lần mở app. Nó dùng hash của `assets/pet.json`, hash của pet `pet.json`, và size + mtime của từng PNG trong `animations`.
+`LoadPetManifestSynced` vẫn tồn tại cho sync explicit/write-back, nhưng không nằm trong runtime/catalog path mặc định.
 
 ## 8. Quy tắc animation
 
@@ -250,12 +245,12 @@ row 6 -> wave
 row 7 -> sleepy
 ```
 
-Import sheet phụ cho pet1:
+Import sheet phụ cho pet5:
 
 ```powershell
 py .\scripts\import_pet_sheet.py `
-  --src .\assets\pet1.1.png `
-  --pet pet1 `
+  --src .\assets\pet5.1.png `
+  --pet pet5 `
   --acts surprised,shy,thinking,cheer,scared,dizzy,dance,sit_idle `
   --overwrite `
   --remove-bg
@@ -274,7 +269,7 @@ Tool hiện tại không dùng threshold để khoét foreground toàn ảnh n�
 Ví dụ:
 
 ```powershell
-.\pet-lite.exe -assets ..\assets -pet pet1 -right-cmd "Start-Process notepad"
+.\pet-lite.exe -assets ..\assets -pet pet5 -right-cmd "Start-Process notepad"
 ```
 
 ## 12. Tích hợp với app khác
@@ -362,7 +357,7 @@ Click bị crash:
 - xem `pet-lite.log`;
 - kiểm tra interaction có trỏ tới animation không tồn tại không;
 - chạy `-catalog` để xác nhận act tồn tại;
-- test lại bằng một pet duy nhất: `-pet pet1`.
+- test lại bằng một pet duy nhất: `-pet pet5`.
 
 Animation sai hướng:
 
