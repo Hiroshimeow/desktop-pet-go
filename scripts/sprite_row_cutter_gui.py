@@ -4,7 +4,7 @@ Sprite Row Cutter GUI
 
 Mục tiêu:
 - Mở 1 ảnh sprite sheet.
-- Dùng lưới 1 hàng x 5..20 frame để chọn đúng một hàng animation.
+- Dùng lưới 1 hàng x 1..20 frame để chọn đúng một hàng animation.
 - Vùng được chọn sáng rõ, phần ngoài bị dim xám.
 - Export hàng đó thành <act>.png dạng strip ngang.
 - Mỗi frame output mặc định là 256x256, phù hợp desktop-pet-lite.
@@ -31,6 +31,11 @@ try:
     RESAMPLE = Image.Resampling.LANCZOS
 except AttributeError:  # Pillow cũ
     RESAMPLE = Image.LANCZOS
+
+
+MIN_FRAME_COUNT = 1
+MAX_FRAME_COUNT = 20
+DEFAULT_FRAME_COUNT = 5
 
 
 DEFAULT_ACTS = [
@@ -70,6 +75,33 @@ def safe_name(name: str) -> str:
 
 def color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
     return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
+
+
+def infer_initial_layout(width: int, height: int, preferred_frame_size: int) -> tuple[int, float, str]:
+    """Infer frame count and initial row height for common sprite layouts."""
+    if width <= 0 or height <= 0:
+        return DEFAULT_FRAME_COUNT, 100.0, "fallback"
+
+    preferred_frame_size = int(clamp(preferred_frame_size, 32, 1024))
+
+    # Most exported pet strips are square frames in one horizontal row, e.g.
+    # 2304x256 => 9 frames, 3072x256 => 12 frames.
+    if width % height == 0:
+        frames = width // height
+        if MIN_FRAME_COUNT <= frames <= MAX_FRAME_COUNT:
+            return frames, float(height), f"detected square strip: {width}/{height}={frames}"
+
+    # If frame size is known, infer frames from width/frame_size. This also
+    # handles multi-row sheets where each row is one animation.
+    if width % preferred_frame_size == 0:
+        frames = width // preferred_frame_size
+        if MIN_FRAME_COUNT <= frames <= MAX_FRAME_COUNT:
+            row_height = float(preferred_frame_size if height >= preferred_frame_size else height)
+            return frames, row_height, f"detected by frame size: {width}/{preferred_frame_size}={frames}"
+
+    # Fallback keeps the older behavior: assume the image contains several
+    # animation rows and start with row 0.
+    return DEFAULT_FRAME_COUNT, float(height) / 8.0, "fallback 8-row estimate"
 
 
 def sample_corner_bg(img: Image.Image, sample: int = 24) -> tuple[int, int, int]:
@@ -173,7 +205,7 @@ class SpriteRowCutterApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
 
-        self.title("Sprite Row Cutter - 1x5 to 1x20 Animation Cutter")
+        self.title("Sprite Row Cutter - 1x1 to 1x20 Animation Cutter")
         self.geometry("1220x840")
         self.minsize(980, 680)
 
@@ -201,7 +233,7 @@ class SpriteRowCutterApp(tk.Tk):
         self.drag_start_pan = (0.0, 0.0)
 
         self.act_name_var = tk.StringVar(value="idle")
-        self.frame_count_var = tk.IntVar(value=5)
+        self.frame_count_var = tk.IntVar(value=DEFAULT_FRAME_COUNT)
         self.frame_size_var = tk.IntVar(value=256)
         self.remove_bg_var = tk.BooleanVar(value=True)
         self.fit_content_var = tk.BooleanVar(value=True)
@@ -233,8 +265,8 @@ class SpriteRowCutterApp(tk.Tk):
         ttk.Label(toolbar, text="Frames:").pack(side="left")
         frame_spin = ttk.Spinbox(
             toolbar,
-            from_=5,
-            to=20,
+            from_=MIN_FRAME_COUNT,
+            to=MAX_FRAME_COUNT,
             textvariable=self.frame_count_var,
             width=4,
             command=self.redraw,
@@ -334,19 +366,19 @@ class SpriteRowCutterApp(tk.Tk):
         self.pan_x = 0.0
         self.pan_y = 0.0
 
-        # Default selection: row 0 of an 8x5 sheet.
-        estimated_rows = 8
+        frames, row_height, detect_note = infer_initial_layout(img.width, img.height, self.get_frame_size())
+        self.frame_count_var.set(frames)
         self.sel = [
             0.0,
             0.0,
             float(img.width),
-            float(img.height) / estimated_rows,
+            row_height,
         ]
         self.row_index_var.set(0)
         self.act_name_var.set(DEFAULT_ACTS[0])
 
         self.status_var.set(
-            f"Loaded: {self.image_path.name} | size={img.width}x{img.height} | output={self.output_dir}"
+            f"Loaded: {self.image_path.name} | size={img.width}x{img.height} | frames={frames} | {detect_note} | output={self.output_dir}"
         )
         self.redraw()
 
@@ -363,9 +395,9 @@ class SpriteRowCutterApp(tk.Tk):
 
     def get_frame_count(self) -> int:
         try:
-            return int(clamp(int(self.frame_count_var.get()), 5, 20))
+            return int(clamp(int(self.frame_count_var.get()), MIN_FRAME_COUNT, MAX_FRAME_COUNT))
         except Exception:
-            return 5
+            return DEFAULT_FRAME_COUNT
 
     def get_frame_size(self) -> int:
         try:
