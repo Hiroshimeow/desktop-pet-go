@@ -6,7 +6,8 @@ import (
 	"testing"
 )
 
-const testAssetsRoot = "..\\assets"
+var testAssetsRoot = filepath.Join("..", "assets")
+
 const testPetID = "pet5"
 
 func testManifest(t *testing.T) PetManifest {
