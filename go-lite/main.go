@@ -267,6 +267,7 @@ func (a *App) createWindows(profileBase string, assetsPath string, petsOverride 
 		if err != nil {
 			return err
 		}
+		manifest = store.Manifest
 		log.Printf("loaded sprite store pet=%s animations=%d", manifest.ID, len(store.Animations))
 		count := active.Count
 		if groupIndex == 0 && petsOverride > 0 {

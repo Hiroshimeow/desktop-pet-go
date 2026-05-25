@@ -1,6 +1,9 @@
 package main
 
 import (
+	"image"
+	"image/png"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -132,5 +135,85 @@ func TestPetMovementAndDragEmotionAreSeparated(t *testing.T) {
 	}
 	if manifest.Animations[p.Animation].Locomotion {
 		t.Fatalf("drag should use emotion/state, got %s", p.Animation)
+	}
+}
+
+func TestLoadSpriteStoreSkipsInvalidOptionalAnimation(t *testing.T) {
+	dir := t.TempDir()
+	animDir := filepath.Join(dir, "animations")
+	if err := os.MkdirAll(animDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestPNG(t, filepath.Join(animDir, "idle.png"), 512, 256)
+	writeTestPNG(t, filepath.Join(animDir, "bad.png"), 512, 300)
+	manifest := PetManifest{
+		ID:               "skip-test",
+		Name:             "skip-test",
+		Scale:            1,
+		FrameWidth:       256,
+		FrameHeight:      256,
+		Columns:          2,
+		DefaultAnimation: "idle",
+		AnimationDir:     "animations",
+		BaseDir:          dir,
+		Interactions: map[string]InteractionAction{
+			"left_click": {Animation: "bad", DurationMS: 500},
+		},
+		Animations: map[string]AnimationDef{
+			"idle": {File: "idle.png", FPS: 4, Frames: 2},
+			"bad":  {File: "bad.png", FPS: 4, Frames: 2},
+		},
+	}
+	store, err := LoadSpriteStore(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.Animations["bad"]; ok {
+		t.Fatal("invalid optional animation should be skipped")
+	}
+	if _, ok := store.Manifest.Animations["bad"]; ok {
+		t.Fatal("invalid optional animation should be removed from manifest")
+	}
+	if _, ok := store.Manifest.Interactions["left_click"]; ok {
+		t.Fatal("interaction pointing to skipped animation should be sanitized")
+	}
+}
+
+func TestLoadSpriteStoreFailsInvalidDefaultAnimation(t *testing.T) {
+	dir := t.TempDir()
+	animDir := filepath.Join(dir, "animations")
+	if err := os.MkdirAll(animDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestPNG(t, filepath.Join(animDir, "idle.png"), 512, 300)
+	manifest := PetManifest{
+		ID:               "bad-default-test",
+		Name:             "bad-default-test",
+		Scale:            1,
+		FrameWidth:       256,
+		FrameHeight:      256,
+		Columns:          2,
+		DefaultAnimation: "idle",
+		AnimationDir:     "animations",
+		BaseDir:          dir,
+		Animations: map[string]AnimationDef{
+			"idle": {File: "idle.png", FPS: 4, Frames: 2},
+		},
+	}
+	_, err := LoadSpriteStore(manifest)
+	if err == nil || !strings.Contains(err.Error(), "default animation") {
+		t.Fatalf("expected invalid default animation error, got %v", err)
+	}
+}
+
+func writeTestPNG(t *testing.T, path string, w, h int) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, image.NewNRGBA(image.Rect(0, 0, w, h))); err != nil {
+		t.Fatal(err)
 	}
 }

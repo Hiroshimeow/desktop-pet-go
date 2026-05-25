@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
+	"log"
 	"os"
 )
 
@@ -22,17 +23,32 @@ type SpriteStore struct {
 
 func LoadSpriteStore(manifest PetManifest) (*SpriteStore, error) {
 	store := &SpriteStore{Manifest: manifest, Animations: map[string]*AnimationStrip{}}
+	loadedDefs := make(map[string]AnimationDef, len(manifest.Animations))
+	var skipped []string
 	for name, def := range manifest.Animations {
 		path := manifest.AnimationPath(def)
 		strip, err := loadStrip(name, def, path, manifest)
 		if err != nil {
-			return nil, err
+			if name == manifest.DefaultAnimation {
+				return nil, fmt.Errorf("default animation %q failed to load: %w", name, err)
+			}
+			log.Printf("skip invalid optional animation pet=%s name=%s file=%s err=%v", manifest.ID, name, path, err)
+			skipped = append(skipped, name)
+			continue
 		}
 		def.Frames = strip.Frames
-		manifest.Animations[name] = def
+		loadedDefs[name] = def
 		store.Animations[name] = strip
 	}
+	if len(store.Animations) == 0 {
+		return nil, fmt.Errorf("pet %s has no loadable animations", manifest.ID)
+	}
+	manifest.Animations = loadedDefs
+	sanitizeInteractions(&manifest)
 	store.Manifest = manifest
+	if len(skipped) > 0 {
+		log.Printf("pet=%s skipped %d invalid optional animations: %v", manifest.ID, len(skipped), skipped)
+	}
 	return store, nil
 }
 
