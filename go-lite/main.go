@@ -39,6 +39,8 @@ const (
 	WM_CAPTURECHANGED = 0x0215
 	AC_SRC_OVER       = 0x00
 	AC_SRC_ALPHA      = 0x01
+	MB_OK             = 0x00000000
+	MB_ICONERROR      = 0x00000010
 )
 
 type point struct{ X, Y int32 }
@@ -70,6 +72,7 @@ var (
 	pCreateWindowExW     = user32.NewProc("CreateWindowExW")
 	pDestroyWindow       = user32.NewProc("DestroyWindow")
 	pDefWindowProcW      = user32.NewProc("DefWindowProcW")
+	pMessageBoxW         = user32.NewProc("MessageBoxW")
 	pShowWindow          = user32.NewProc("ShowWindow")
 	pPostQuitMessage     = user32.NewProc("PostQuitMessage")
 	pGetMessageW         = user32.NewProc("GetMessageW")
@@ -166,8 +169,7 @@ func main() {
 	debug.SetGCPercent(25)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("fatal panic in main: %v\n%s", r, debug.Stack())
-			os.Exit(2)
+			fatalExit(2, "fatal panic in main: %v\n%s", r, debug.Stack())
 		}
 	}()
 	rand.Seed(time.Now().UnixNano())
@@ -185,18 +187,18 @@ func main() {
 	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *clickCommand != "", *rightCommand != "")
 	profile, profileBase, err := loadRuntimeProfile(*profilePath, *assetsPath, *petSelect)
 	if err != nil {
-		log.Fatal(err)
+		fatalExit(1, "load runtime profile failed: %v", err)
 	}
 	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand}
 	log.Printf("screen size=%dx%d selected_groups=%d", app.ScreenW, app.ScreenH, len(profile.ActivePets))
 	if *catalog {
 		if err := app.printCatalogOnly(profileBase, *assetsPath); err != nil {
-			log.Fatal(err)
+			fatalExit(1, "catalog failed: %v", err)
 		}
 		return
 	}
 	if err := app.createWindows(profileBase, *assetsPath, *petsOverride, *scaleOverride, false); err != nil {
-		log.Fatal(err)
+		fatalExit(1, "create windows failed: %v", err)
 	}
 	go app.loop()
 	messageLoop()
@@ -308,6 +310,9 @@ func (a *App) createWindows(profileBase string, assetsPath string, petsOverride 
 			log.Printf("created window hwnd=%d pet=%s instance=%s frame=%dx%d scale=%.2f start=(%.0f,%.0f)", hwnd, manifest.ID, pet.InstanceID, frameW, frameH, scale, pet.X, pet.Y)
 		}
 	}
+	if len(a.Pets) == 0 {
+		return fmt.Errorf("no pet windows created; profile groups=%d assets=%q", len(a.Profile.ActivePets), assetsPath)
+	}
 	return nil
 }
 
@@ -326,6 +331,25 @@ func initLog() {
 	}
 	log.SetOutput(os.Stderr)
 	log.Printf("failed to open log file %s: %v", logPath, err)
+}
+
+func fatalExit(code int, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	log.Print(msg)
+	showErrorDialog("Desktop Pet Lite", msg)
+	os.Exit(code)
+}
+
+func showErrorDialog(title string, message string) {
+	if message == "" {
+		return
+	}
+	titlePtr, titleErr := syscall.UTF16PtrFromString(title)
+	messagePtr, messageErr := syscall.UTF16PtrFromString(message)
+	if titleErr != nil || messageErr != nil {
+		return
+	}
+	pMessageBoxW.Call(0, uintptr(unsafe.Pointer(messagePtr)), uintptr(unsafe.Pointer(titlePtr)), MB_OK|MB_ICONERROR)
 }
 
 func (wp *WindowPet) initBitmap(w, h int) error {
