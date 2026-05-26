@@ -6,6 +6,7 @@ Tài liệu chi tiết nằm trong `docs/`:
 
 - `docs/HANDBOOK.md`: handbook vận hành/phát triển hằng ngày.
 - `docs/ARCHITECTURE.md`: kiến trúc module, data flow, config model.
+- `docs/VOICE_REQUIREMENTS.md`: requirement baseline cho voice/reader/TTS/STT CPU-only; đọc trước khi review hoặc implement voice.
 - `docs/STUDYBOOK.md`: studybook giải thích kỹ thuật và quyết định thiết kế.
 - `docs/CASE_STUDIES.md`: case studies/decision records từ các lỗi đã gặp.
 - `docs/ROADMAP.md`: roadmap phát triển tiếp theo.
@@ -88,17 +89,24 @@ Liệt kê animation được load:
 
 ## Build/test
 
+Review/check-only, không sửa working tree:
+
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
-gofmt -w config.go config_test.go discovery.go host_api.go main.go pet.go sprite.go split_assets.go
+Get-Command gofmt -ErrorAction Stop | Out-Null
+Get-Command go -ErrorAction Stop | Out-Null
+if ((gofmt -l *.go).Length -ne 0) { throw "gofmt check failed" }
 go test ./...
-go build -ldflags='-s -w' -o pet-lite.exe .
+go build -o pet-lite-debug.exe .
+go build -ldflags='-s -w -H=windowsgui' -o pet-lite.exe .
 ```
 
-Nếu muốn build kiểu GUI không mở console:
+Các lệnh build tạo binary ignored; xóa sau khi verify nếu không cần giữ local.
+
+Developer formatting/fix khi cần sửa format:
 
 ```powershell
-go build -ldflags='-s -w -H=windowsgui' -o pet-lite.exe .
+gofmt -w *.go
 ```
 
 ## Cấu trúc pet

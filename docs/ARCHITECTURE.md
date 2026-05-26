@@ -12,7 +12,7 @@ Project hướng tới một desktop pet runtime trên Windows 11 với các đ�
 - animation được quản lý bằng file PNG strip;
 - có thể thêm animation mới mà không sửa code;
 - có thể tích hợp với app khác qua command/API/event;
-- runtime giữ nhiệm vụ visual/interaction, không ôm AI/TTS/Vision nặng.
+- runtime giữ nhiệm vụ visual/interaction, không ôm AI/TTS/Vision nặng; voice/reader nếu bật chỉ được orchestration nhẹ và phải tuân thủ `VOICE_REQUIREMENTS.md`.
 
 ## 2. Layer tổng quan
 
@@ -197,7 +197,7 @@ Nhược điểm:
 
 ## 9. Integration model
 
-Không nhúng AI/TTS/Vision vào runtime. Runtime chỉ nên expose event bridge.
+Không nhúng AI/TTS/Vision nặng vào runtime. Runtime chỉ nên expose event bridge. Voice/reader là optional subsystem theo boundary sidecar-first: `go-lite` được giữ phần orchestration nhẹ như queue, state, animation events, local process/client adapter, audio control và reader local-file nhỏ; inference model, backend server, dependency cài đặt, benchmark CPU và cache/model lớn phải nằm ngoài render/message loop và tuân thủ `docs/VOICE_REQUIREMENTS.md`.
 
 Host app gửi:
 
@@ -251,3 +251,16 @@ Khi debug nên build console mode, không dùng `-H=windowsgui`.
 - `go-lite/` không đọc source sheet gốc.
 - Pet runtime không gọi OpenAI trực tiếp trong phase hiện tại.
 - Control panel nên là app riêng hoặc mode riêng, không làm runtime chính nặng.
+
+## 12. Voice/reader boundary
+
+Voice/reader được phép tồn tại như optional local subsystem, nhưng không thay đổi vai trò chính của runtime. Các rule bắt buộc:
+
+- `go-lite` không tự bundle model TTS/STT, không phụ thuộc cloud, không yêu cầu GPU.
+- Backend CPU local như Piper, VOICEVOX localhost hoặc whisper.cpp phải đi qua adapter rõ ràng.
+- Thiếu backend/model không được làm pet không hiện.
+- STT transcript không bao giờ được route vào shell command hoặc `-click-cmd`/`-right-cmd`.
+- Reader Phase 1 chỉ đọc `.txt`/`.md`; PDF là phase riêng sau khi có strategy/limits/test.
+- Model/cache/generated audio nằm ngoài git theo `.gitignore`.
+
+Source of truth chi tiết: `docs/VOICE_REQUIREMENTS.md`.

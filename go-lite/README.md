@@ -117,9 +117,17 @@ Hoặc nhiều instance của pet đầu tiên:
 
 ## Build / test
 
+Debug console build, thuận tiện đọc log trong PowerShell:
+
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
 go test ./...
+go build -o pet-lite-debug.exe .
+```
+
+Release GUI build, không mở console:
+
+```powershell
 go build -ldflags "-s -w -H=windowsgui" -o pet-lite.exe .
 ```
 

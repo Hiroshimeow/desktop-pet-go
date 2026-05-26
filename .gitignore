@@ -39,3 +39,19 @@ assets/pets/*
 assets/pets/pet5/.petcache.json
 assets/pets/pet5/*_history.jsonl
 assets/pets/pet5/animations/*_history.jsonl
+
+# Voice models and generated voice/cache artifacts
+models/
+go-lite/cache/
+*.wav
+*.mp3
+*.flac
+*.ogg
+!go-lite/testdata/**/*.wav
+!go-lite/testdata/**/*.mp3
+!go-lite/testdata/**/*.flac
+!go-lite/testdata/**/*.ogg
+transcripts/
+**/transcripts/
+*.transcript.txt
+*.transcript.json

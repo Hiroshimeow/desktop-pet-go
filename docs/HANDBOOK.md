@@ -84,19 +84,24 @@ In catalog animation rồi thoát:
 
 ## 4. Build và test
 
-Build bản console, dễ debug:
+Review/check-only, không sửa working tree:
 
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
-gofmt -w config.go config_test.go discovery.go host_api.go main.go pet.go sprite.go split_assets.go
+Get-Command gofmt -ErrorAction Stop | Out-Null
+Get-Command go -ErrorAction Stop | Out-Null
+if ((gofmt -l *.go).Length -ne 0) { throw "gofmt check failed" }
 go test ./...
-go build -ldflags='-s -w' -o pet-lite.exe .
+go build -o pet-lite-debug.exe .
+go build -ldflags='-s -w -H=windowsgui' -o pet-lite.exe .
 ```
 
-Build bản GUI không mở console:
+Các lệnh build tạo binary ignored; xóa sau khi verify nếu không cần giữ local.
+
+Developer formatting/fix khi cần sửa format:
 
 ```powershell
-go build -ldflags='-s -w -H=windowsgui' -o pet-lite.exe .
+gofmt -w *.go
 ```
 
 Khi debug crash, dùng bản console hoặc xem log:
