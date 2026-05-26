@@ -154,4 +154,6 @@ Chuột phải: pet chạy `right_click`; riêng `pet5` random một trong `angr
 
 Click trái cũng có thể gọi hook ngoài bằng `-click-cmd`, còn animation khi giữ chuột vẫn theo drag emotion.
 
+Hook chạy bất đồng bộ, có timeout mặc định 15 giây và giới hạn concurrency để tránh click spam tạo quá nhiều process. Có thể chỉnh timeout bằng `-hook-timeout-ms`; đặt `<=0` để tắt timeout khi debug command local dài.
+
 `-click-cmd` và `-right-cmd` chỉ dành cho command local đáng tin cậy. Không nhận shell command từ asset bundle không tin cậy; nếu sau này cần hook từ asset, nên dùng allowlist action thay vì command tự do.

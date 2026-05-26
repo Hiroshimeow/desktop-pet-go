@@ -145,6 +145,10 @@ App khác chạy `pet-lite.exe` và truyền command hook:
 
 Cách này dễ tích hợp nhất cho app C#, Go, Python, Rust, Node, Electron hoặc app nghe nhạc.
 
+Hook command là trusted local command và được chạy qua PowerShell. Runtime mặc định timeout hook sau 15 giây; chỉnh bằng `-hook-timeout-ms`, hoặc đặt `<=0` để tắt timeout khi debug. Runtime cũng có concurrency guard để click spam không tạo quá nhiều hook process cùng lúc.
+
+Timeout chỉ áp dụng cho process PowerShell chính. Nếu hook tự spawn child process, command local nên tự cleanup child process của nó.
+
 ### 2. In-process Go package
 
 Có thể tách các file core thành package:

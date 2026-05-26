@@ -195,7 +195,3 @@ func durationOf(anim AnimationDef) int {
 	}
 	return 1500
 }
-
-func OrderedAnimationNames() []string {
-	return []string{"idle", "walk", "run", "happy", "cry", "angry", "wave", "sleepy", "surprised", "shy", "thinking", "cheer", "scared", "dizzy", "dance", "sit_idle"}
-}

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -19,28 +20,29 @@ import (
 )
 
 const (
-	WS_EX_LAYERED     = 0x00080000
-	WS_EX_TOPMOST     = 0x00000008
-	WS_EX_TOOLWINDOW  = 0x00000080
-	WS_POPUP          = 0x80000000
-	SW_SHOW           = 5
-	ULW_ALPHA         = 0x00000002
-	BI_RGB            = 0
-	DIB_RGB_COLORS    = 0
-	CS_DBLCLKS        = 0x0008
-	VK_LBUTTON        = 0x01
-	WM_DESTROY        = 0x0002
-	WM_CLOSE          = 0x0010
-	WM_CANCELMODE     = 0x001F
-	WM_LBUTTONDOWN    = 0x0201
-	WM_LBUTTONUP      = 0x0202
-	WM_LBUTTONDBLCLK  = 0x0203
-	WM_RBUTTONDOWN    = 0x0204
-	WM_CAPTURECHANGED = 0x0215
-	AC_SRC_OVER       = 0x00
-	AC_SRC_ALPHA      = 0x01
-	MB_OK             = 0x00000000
-	MB_ICONERROR      = 0x00000010
+	WS_EX_LAYERED              = 0x00080000
+	WS_EX_TOPMOST              = 0x00000008
+	WS_EX_TOOLWINDOW           = 0x00000080
+	WS_POPUP                   = 0x80000000
+	SW_SHOW                    = 5
+	ULW_ALPHA                  = 0x00000002
+	BI_RGB                     = 0
+	DIB_RGB_COLORS             = 0
+	CS_DBLCLKS                 = 0x0008
+	VK_LBUTTON                 = 0x01
+	WM_DESTROY                 = 0x0002
+	WM_CLOSE                   = 0x0010
+	WM_CANCELMODE              = 0x001F
+	WM_LBUTTONDOWN             = 0x0201
+	WM_LBUTTONUP               = 0x0202
+	WM_LBUTTONDBLCLK           = 0x0203
+	WM_RBUTTONDOWN             = 0x0204
+	WM_CAPTURECHANGED          = 0x0215
+	AC_SRC_OVER                = 0x00
+	AC_SRC_ALPHA               = 0x01
+	MB_OK                      = 0x00000000
+	MB_ICONERROR               = 0x00000010
+	ERROR_CLASS_ALREADY_EXISTS = 1410
 )
 
 type point struct{ X, Y int32 }
@@ -161,6 +163,8 @@ type App struct {
 	ScreenH      int
 	ClickCommand string
 	RightCommand string
+	HookTimeout  time.Duration
+	HookSem      chan struct{}
 }
 
 var app *App
@@ -179,8 +183,9 @@ func main() {
 	petsOverride := flag.Int("count", 0, "override instance count for first selected pet")
 	scaleOverride := flag.Float64("scale", 0, "optional temporary scale override; default scale is read from pet.json")
 	catalog := flag.Bool("catalog", false, "print loaded pet/animation catalog")
-	clickCommand := flag.String("click-cmd", "", "optional command run on left click")
-	rightCommand := flag.String("right-cmd", "", "optional command run on right click")
+	clickCommand := flag.String("click-cmd", "", "optional trusted local command run on left click")
+	rightCommand := flag.String("right-cmd", "", "optional trusted local command run on right click")
+	hookTimeoutMS := flag.Int("hook-timeout-ms", 15000, "timeout for optional click/right trusted local hook commands; <=0 disables timeout")
 	flag.Parse()
 
 	initLog()
@@ -189,7 +194,8 @@ func main() {
 	if err != nil {
 		fatalExit(1, "load runtime profile failed: %v", err)
 	}
-	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand}
+	hookTimeout := time.Duration(*hookTimeoutMS) * time.Millisecond
+	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand, HookTimeout: hookTimeout, HookSem: make(chan struct{}, 2)}
 	log.Printf("screen size=%dx%d selected_groups=%d", app.ScreenW, app.ScreenH, len(profile.ActivePets))
 	if *catalog {
 		if err := app.printCatalogOnly(profileBase, *assetsPath); err != nil {
@@ -197,7 +203,7 @@ func main() {
 		}
 		return
 	}
-	if err := app.createWindows(profileBase, *assetsPath, *petsOverride, *scaleOverride, false); err != nil {
+	if err := app.createWindows(profileBase, *assetsPath, *petsOverride, *scaleOverride); err != nil {
 		fatalExit(1, "create windows failed: %v", err)
 	}
 	go app.loop()
@@ -205,25 +211,11 @@ func main() {
 }
 
 func (a *App) printCatalogOnly(profileBase string, assetsPath string) error {
-	profileDir := profileBase
-	defaultManifestPath := filepath.Join(assetsPath, "pet.json")
 	for _, active := range a.Profile.ActivePets {
 		if !active.Enabled {
 			continue
 		}
-		manifestPath := active.Manifest
-		if manifestPath == "" {
-			manifestPath = filepath.Join(assetsPath, "pets", active.PetID, "pet.json")
-		} else if !filepath.IsAbs(manifestPath) {
-			manifestPath = filepath.Clean(filepath.Join(profileDir, manifestPath))
-		}
-		var manifest PetManifest
-		var err error
-		if active.Manifest == "" {
-			manifest, err = LoadPetManifestMerged(defaultManifestPath, filepath.Dir(manifestPath))
-		} else {
-			manifest, err = LoadPetManifest(manifestPath)
-		}
+		manifest, err := resolveAndLoadManifest(active, profileBase, assetsPath)
 		if err != nil {
 			return err
 		}
@@ -232,33 +224,35 @@ func (a *App) printCatalogOnly(profileBase string, assetsPath string) error {
 	return nil
 }
 
-func (a *App) createWindows(profileBase string, assetsPath string, petsOverride int, scaleOverride float64, catalog bool) error {
+func resolveAndLoadManifest(active ActivePetConfig, profileBase string, assetsPath string) (PetManifest, error) {
+	manifestPath := active.Manifest
+	if manifestPath == "" {
+		manifestPath = filepath.Join(assetsPath, "pets", active.PetID, "pet.json")
+	} else if !filepath.IsAbs(manifestPath) {
+		manifestPath = filepath.Clean(filepath.Join(profileBase, manifestPath))
+	}
+	if active.Manifest == "" {
+		return LoadPetManifestMerged(filepath.Join(assetsPath, "pet.json"), filepath.Dir(manifestPath))
+	}
+	return LoadPetManifest(manifestPath)
+}
+
+func (a *App) createWindows(profileBase string, assetsPath string, petsOverride int, scaleOverride float64) error {
 	cls, err := syscall.UTF16PtrFromString("DesktopPetLiteGoWindow")
 	if err != nil {
 		return err
 	}
 	inst, _, _ := pGetModuleHandleW.Call(0)
 	wc := wndClassEx{Size: uint32(unsafe.Sizeof(wndClassEx{})), Style: CS_DBLCLKS, WndProc: syscall.NewCallback(wndProc), Instance: inst, ClassName: cls}
-	pRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
-	profileDir := profileBase
-	defaultManifestPath := filepath.Join(assetsPath, "pet.json")
+	classAtom, _, regErr := pRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+	if classAtom == 0 && regErr != syscall.Errno(ERROR_CLASS_ALREADY_EXISTS) {
+		return fmt.Errorf("RegisterClassExW failed: %w", regErr)
+	}
 	for groupIndex, active := range a.Profile.ActivePets {
 		if !active.Enabled {
 			continue
 		}
-		manifestPath := active.Manifest
-		if manifestPath == "" {
-			manifestPath = filepath.Join(assetsPath, "pets", active.PetID, "pet.json")
-		} else if !filepath.IsAbs(manifestPath) {
-			manifestPath = filepath.Clean(filepath.Join(profileDir, manifestPath))
-		}
-		var manifest PetManifest
-		var err error
-		if active.Manifest == "" {
-			manifest, err = LoadPetManifestMerged(defaultManifestPath, filepath.Dir(manifestPath))
-		} else {
-			manifest, err = LoadPetManifest(manifestPath)
-		}
+		manifest, err := resolveAndLoadManifest(active, profileBase, assetsPath)
 		if err != nil {
 			return err
 		}
@@ -288,9 +282,6 @@ func (a *App) createWindows(profileBase string, assetsPath string, petsOverride 
 		}
 		frameW := max(32, int(float64(manifest.FrameWidth)*scale))
 		frameH := max(32, int(float64(manifest.FrameHeight)*scale))
-		if catalog {
-			printCatalog(manifest)
-		}
 		for i := 0; i < count; i++ {
 			hwnd, _, err := pCreateWindowExW.Call(WS_EX_LAYERED|WS_EX_TOPMOST|WS_EX_TOOLWINDOW, uintptr(unsafe.Pointer(cls)), uintptr(unsafe.Pointer(cls)), WS_POPUP, 0, 0, uintptr(frameW), uintptr(frameH), 0, 0, inst, 0)
 			if hwnd == 0 {
@@ -417,11 +408,47 @@ func (a *App) findPet(hwnd uintptr) *WindowPet {
 	return nil
 }
 func (a *App) runHook(command string) {
-	if command != "" {
-		go func() {
-			_ = exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command).Start()
-		}()
+	if command == "" {
+		return
 	}
+	if a.HookSem == nil {
+		log.Printf("hook skipped: hook semaphore is not initialized")
+		return
+	}
+	select {
+	case a.HookSem <- struct{}{}:
+	default:
+		log.Printf("hook skipped: concurrency limit reached")
+		return
+	}
+	go func() {
+		defer func() { <-a.HookSem }()
+		ctx := context.Background()
+		cancel := func() {}
+		if a.HookTimeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, a.HookTimeout)
+		}
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command)
+		if err := cmd.Start(); err != nil {
+			log.Printf("hook start failed: %v", err)
+			return
+		}
+		pid := 0
+		if cmd.Process != nil {
+			pid = cmd.Process.Pid
+		}
+		log.Printf("hook started pid=%d timeout=%s", pid, a.HookTimeout)
+		if err := cmd.Wait(); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				log.Printf("hook timed out pid=%d timeout=%s", pid, a.HookTimeout)
+				return
+			}
+			log.Printf("hook failed pid=%d err=%v", pid, err)
+			return
+		}
+		log.Printf("hook completed pid=%d", pid)
+	}()
 }
 
 func emitInput(ev InputEvent) {
@@ -460,24 +487,24 @@ func (a *App) handleInputEvent(ev InputEvent) {
 		a.beginPendingLeft(p, ev.X, ev.Y, ev.Reason)
 	case InputLeftUp:
 		if p.Drag {
-			a.endDrag(p, "left_up", false)
+			a.endDrag(p, "left_up")
 		} else if p.PendingLeft {
-			a.endPendingLeft(p, "left_up_click", false)
+			a.endPendingLeft(p, "left_up_click")
 			p.Pet.TriggerAction("left_click")
 			a.runHook(a.ClickCommand)
 		}
 	case InputLeftDouble:
 		log.Printf("double click hwnd=%d pet=%s; cancel pending/drag and play left_click", ev.HWND, p.Pet.InstanceID)
-		a.cancelLeftInput(p, "double_click", false)
+		a.cancelLeftInput(p, "double_click")
 		p.Pet.TriggerAction("left_click")
 		a.runHook(a.ClickCommand)
 	case InputRightDown:
 		log.Printf("right click hwnd=%d pet=%s", ev.HWND, p.Pet.InstanceID)
-		a.cancelLeftInput(p, "right_click", false)
+		a.cancelLeftInput(p, "right_click")
 		p.Pet.TriggerAction("right_click")
 		a.runHook(a.RightCommand)
 	case InputCancel:
-		a.cancelLeftInput(p, ev.Reason, false)
+		a.cancelLeftInput(p, ev.Reason)
 	}
 }
 
@@ -507,7 +534,7 @@ func (a *App) loop() {
 			if wp.PendingLeft && !wp.Drag {
 				if !isLeftButtonDown() {
 					log.Printf("pending click safety release: left button is not down hwnd=%d pet=%s", wp.HWND, wp.Pet.InstanceID)
-					a.endPendingLeft(wp, "safety_left_button_up", false)
+					a.endPendingLeft(wp, "safety_left_button_up")
 					wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
 					a.drawPet(wp)
 					continue
@@ -523,7 +550,7 @@ func (a *App) loop() {
 			if wp.Drag {
 				if !isLeftButtonDown() {
 					log.Printf("drag safety release: left button is not down hwnd=%d pet=%s", wp.HWND, wp.Pet.InstanceID)
-					a.endDrag(wp, "safety_left_button_up", false)
+					a.endDrag(wp, "safety_left_button_up")
 					wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
 					a.drawPet(wp)
 					continue
@@ -668,7 +695,7 @@ func (a *App) beginPendingLeft(wp *WindowPet, mx, my int32, reason string) {
 	log.Printf("pending left begin hwnd=%d pet=%s reason=%s offset=(%d,%d) screen=(%d,%d) pos=(%.0f,%.0f)", wp.HWND, wp.Pet.InstanceID, reason, mx, my, pt.X, pt.Y, wp.Pet.X, wp.Pet.Y)
 }
 
-func (a *App) endPendingLeft(wp *WindowPet, reason string, releaseCapture bool) {
+func (a *App) endPendingLeft(wp *WindowPet, reason string) {
 	if wp == nil || wp.Pet == nil || !wp.PendingLeft {
 		return
 	}
@@ -676,16 +703,16 @@ func (a *App) endPendingLeft(wp *WindowPet, reason string, releaseCapture bool) 
 	log.Printf("pending left end hwnd=%d pet=%s reason=%s pos=(%.0f,%.0f)", wp.HWND, wp.Pet.InstanceID, reason, wp.Pet.X, wp.Pet.Y)
 }
 
-func (a *App) cancelLeftInput(wp *WindowPet, reason string, releaseCapture bool) {
+func (a *App) cancelLeftInput(wp *WindowPet, reason string) {
 	if wp == nil || wp.Pet == nil {
 		return
 	}
 	if wp.Drag {
-		a.endDrag(wp, reason, releaseCapture)
+		a.endDrag(wp, reason)
 		return
 	}
 	if wp.PendingLeft {
-		a.endPendingLeft(wp, reason, releaseCapture)
+		a.endPendingLeft(wp, reason)
 	}
 }
 
@@ -702,7 +729,7 @@ func (a *App) cancelOtherLeftInputs(active *WindowPet, reason string) {
 		}
 		if wp.PendingLeft || wp.Drag || wp.Pet.DragMode {
 			log.Printf("cancel stale left input hwnd=%d pet=%s active_hwnd=%d reason=%s", wp.HWND, wp.Pet.InstanceID, active.HWND, reason)
-			a.cancelLeftInput(wp, reason, false)
+			a.cancelLeftInput(wp, reason)
 		}
 	}
 }
@@ -723,7 +750,7 @@ func (a *App) beginDrag(wp *WindowPet, mx, my int32, reason string) {
 	log.Printf("drag begin hwnd=%d pet=%s reason=%s offset=(%d,%d) pos=(%.0f,%.0f)", wp.HWND, wp.Pet.InstanceID, reason, mx, my, wp.Pet.X, wp.Pet.Y)
 }
 
-func (a *App) endDrag(wp *WindowPet, reason string, releaseCapture bool) {
+func (a *App) endDrag(wp *WindowPet, reason string) {
 	if wp == nil || wp.Pet == nil {
 		return
 	}
