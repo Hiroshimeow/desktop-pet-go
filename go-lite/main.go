@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
-	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -33,6 +32,7 @@ const (
 	WM_DESTROY                 = 0x0002
 	WM_CLOSE                   = 0x0010
 	WM_CANCELMODE              = 0x001F
+	WM_TIMER                   = 0x0113
 	WM_LBUTTONDOWN             = 0x0201
 	WM_LBUTTONUP               = 0x0202
 	WM_LBUTTONDBLCLK           = 0x0203
@@ -43,6 +43,8 @@ const (
 	MB_OK                      = 0x00000000
 	MB_ICONERROR               = 0x00000010
 	ERROR_CLASS_ALREADY_EXISTS = 1410
+	appTimerID                 = 1
+	appTimerMS                 = 16
 )
 
 type point struct{ X, Y int32 }
@@ -76,7 +78,8 @@ var (
 	pDefWindowProcW      = user32.NewProc("DefWindowProcW")
 	pMessageBoxW         = user32.NewProc("MessageBoxW")
 	pShowWindow          = user32.NewProc("ShowWindow")
-	pPostQuitMessage     = user32.NewProc("PostQuitMessage")
+	pSetTimer            = user32.NewProc("SetTimer")
+	pKillTimer           = user32.NewProc("KillTimer")
 	pGetMessageW         = user32.NewProc("GetMessageW")
 	pTranslateMessage    = user32.NewProc("TranslateMessage")
 	pDispatchMessageW    = user32.NewProc("DispatchMessageW")
@@ -158,13 +161,13 @@ type App struct {
 	Profile      Profile
 	Pets         []*WindowPet
 	Inputs       chan InputEvent
-	Mu           sync.RWMutex
 	ScreenW      int
 	ScreenH      int
 	ClickCommand string
 	RightCommand string
 	HookTimeout  time.Duration
 	HookSem      chan struct{}
+	LastTick     time.Time
 }
 
 var app *App
@@ -195,7 +198,7 @@ func main() {
 		fatalExit(1, "load runtime profile failed: %v", err)
 	}
 	hookTimeout := time.Duration(*hookTimeoutMS) * time.Millisecond
-	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand, HookTimeout: hookTimeout, HookSem: make(chan struct{}, 2)}
+	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand, HookTimeout: hookTimeout, HookSem: make(chan struct{}, 2), LastTick: time.Now()}
 	log.Printf("screen size=%dx%d selected_groups=%d", app.ScreenW, app.ScreenH, len(profile.ActivePets))
 	if *catalog {
 		if err := app.printCatalogOnly(profileBase, *assetsPath); err != nil {
@@ -206,7 +209,9 @@ func main() {
 	if err := app.createWindows(profileBase, *assetsPath, *petsOverride, *scaleOverride); err != nil {
 		fatalExit(1, "create windows failed: %v", err)
 	}
-	go app.loop()
+	if err := app.startUITimer(); err != nil {
+		fatalExit(1, "start UI timer failed: %v", err)
+	}
 	messageLoop()
 }
 
@@ -398,8 +403,6 @@ func (wp *WindowPet) Destroy() {
 }
 
 func (a *App) findPet(hwnd uintptr) *WindowPet {
-	a.Mu.RLock()
-	defer a.Mu.RUnlock()
 	for _, p := range a.Pets {
 		if p.HWND == hwnd {
 			return p
@@ -462,8 +465,8 @@ func emitInput(ev InputEvent) {
 	}
 }
 
-// processInputEvents is intentionally executed by the render goroutine, not by wndProc.
-// This keeps all pet state mutations on one thread and avoids crashes when several pet windows receive clicks quickly.
+// processInputEvents is executed from the UI timer path, not from wndProc.
+// Together with draw/update ticks, this keeps pet state on the Win32 UI thread.
 func (a *App) processInputEvents() {
 	for i := 0; i < 64; i++ {
 		select {
@@ -508,76 +511,96 @@ func (a *App) handleInputEvent(ev InputEvent) {
 	}
 }
 
-func (a *App) loop() {
+func (a *App) startUITimer() error {
+	if a == nil {
+		return fmt.Errorf("app is nil")
+	}
+	r, _, err := pSetTimer.Call(0, appTimerID, appTimerMS, 0)
+	if r == 0 {
+		return fmt.Errorf("SetTimer failed: %w", err)
+	}
+	log.Printf("ui timer started id=%d interval_ms=%d", appTimerID, appTimerMS)
+	return nil
+}
+
+func (a *App) stopUITimer() {
+	if a == nil {
+		return
+	}
+	pKillTimer.Call(0, appTimerID)
+	log.Printf("ui timer stopped id=%d", appTimerID)
+}
+
+func (a *App) tick() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("panic in render loop: %v\n%s", r, debug.Stack())
+			log.Printf("panic in ui tick: %v\n%s", r, debug.Stack())
 		}
 	}()
-	last := time.Now()
-	ticker := time.NewTicker(time.Second / 60)
-	defer ticker.Stop()
-	for range ticker.C {
-		a.processInputEvents()
-		now := time.Now()
-		dt := now.Sub(last).Seconds()
-		if dt > 0.05 {
-			dt = 0.05
+
+	a.processInputEvents()
+	now := time.Now()
+	dt := now.Sub(a.LastTick).Seconds()
+	if dt <= 0 || dt > 0.05 {
+		dt = 0.05
+	}
+	a.LastTick = now
+
+	petsSnapshot := append([]*WindowPet(nil), a.Pets...)
+	for _, wp := range petsSnapshot {
+		if wp == nil || wp.Pet == nil || wp.Bits == 0 {
+			continue
 		}
-		last = now
-		a.Mu.RLock()
-		petsSnapshot := append([]*WindowPet(nil), a.Pets...)
-		a.Mu.RUnlock()
-		for _, wp := range petsSnapshot {
-			// Click/drag is handled without Win32 mouse capture.
-			// SetCapture/ReleaseCapture caused WM_CAPTURECHANGED re-entrancy and app exits when several pet windows were active.
-			if wp.PendingLeft && !wp.Drag {
-				if !isLeftButtonDown() {
-					log.Printf("pending click safety release: left button is not down hwnd=%d pet=%s", wp.HWND, wp.Pet.InstanceID)
-					a.endPendingLeft(wp, "safety_left_button_up")
-					wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
-					a.drawPet(wp)
-					continue
-				}
-				var pt point
-				pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
-				dx := absInt(int(pt.X - wp.DownScreenX))
-				dy := absInt(int(pt.Y - wp.DownScreenY))
-				if dx+dy >= 10 || time.Since(wp.DownAt) >= 180*time.Millisecond {
-					a.beginDrag(wp, wp.DragOffX, wp.DragOffY, "pending_promoted")
-				}
-			}
-			if wp.Drag {
-				if !isLeftButtonDown() {
-					log.Printf("drag safety release: left button is not down hwnd=%d pet=%s", wp.HWND, wp.Pet.InstanceID)
-					a.endDrag(wp, "safety_left_button_up")
-					wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
-					a.drawPet(wp)
-					continue
-				}
-				var pt point
-				pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
-				wp.Pet.X = float64(int(pt.X) - int(wp.DragOffX))
-				wp.Pet.Y = float64(int(pt.Y) - int(wp.DragOffY))
-				if wp.Pet.X < 0 {
-					wp.Pet.X = 0
-				}
-				if wp.Pet.Y < 0 {
-					wp.Pet.Y = 0
-				}
-				if wp.Pet.X > float64(a.ScreenW-wp.FrameW) {
-					wp.Pet.X = float64(a.ScreenW - wp.FrameW)
-				}
-				if wp.Pet.Y > float64(a.ScreenH-wp.FrameH) {
-					wp.Pet.Y = float64(a.ScreenH - wp.FrameH)
-				}
-				wp.Pet.UpdateDragEmotion()
-				wp.Pet.advanceFrame(dt)
-			} else {
+
+		// Mouse ownership is represented in app state, not in Win32 capture.
+		// This avoids WM_CAPTURECHANGED/WM_CANCELMODE re-entrancy during rapid input.
+		if wp.PendingLeft && !wp.Drag {
+			if !isLeftButtonDown() {
+				log.Printf("pending click release by button state hwnd=%d pet=%s", wp.HWND, wp.Pet.InstanceID)
+				a.endPendingLeft(wp, "button_state_left_up")
 				wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
+				a.drawPet(wp)
+				continue
 			}
-			a.drawPet(wp)
+			var pt point
+			pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+			dx := absInt(int(pt.X - wp.DownScreenX))
+			dy := absInt(int(pt.Y - wp.DownScreenY))
+			if dx+dy >= 10 || time.Since(wp.DownAt) >= 180*time.Millisecond {
+				a.beginDrag(wp, wp.DragOffX, wp.DragOffY, "pending_promoted")
+			}
 		}
+
+		if wp.Drag {
+			if !isLeftButtonDown() {
+				log.Printf("drag release by button state hwnd=%d pet=%s", wp.HWND, wp.Pet.InstanceID)
+				a.endDrag(wp, "button_state_left_up")
+				wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
+				a.drawPet(wp)
+				continue
+			}
+			var pt point
+			pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+			wp.Pet.X = float64(int(pt.X) - int(wp.DragOffX))
+			wp.Pet.Y = float64(int(pt.Y) - int(wp.DragOffY))
+			if wp.Pet.X < 0 {
+				wp.Pet.X = 0
+			}
+			if wp.Pet.Y < 0 {
+				wp.Pet.Y = 0
+			}
+			if wp.Pet.X > float64(a.ScreenW-wp.FrameW) {
+				wp.Pet.X = float64(a.ScreenW - wp.FrameW)
+			}
+			if wp.Pet.Y > float64(a.ScreenH-wp.FrameH) {
+				wp.Pet.Y = float64(a.ScreenH - wp.FrameH)
+			}
+			wp.Pet.UpdateDragEmotion()
+			wp.Pet.advanceFrame(dt)
+		} else {
+			wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
+		}
+		a.drawPet(wp)
 	}
 }
 
@@ -660,15 +683,12 @@ func wndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		log.Printf("WM_CLOSE ignored hwnd=%d", hwnd)
 		return 0
 	case WM_DESTROY:
+		// WM_DESTROY is already on the Win32 UI thread. Remove resources here, but
+		// never post quit from a pet window destroy; accidental window destruction
+		// must not force-close the process during rapid click/drag input.
 		log.Printf("WM_DESTROY hwnd=%d", hwnd)
 		if app != nil {
-			remaining := app.removePetWindow(hwnd)
-			if remaining == 0 {
-				log.Printf("all pet windows destroyed; posting quit")
-				pPostQuitMessage.Call(0)
-			}
-		} else {
-			pPostQuitMessage.Call(0)
+			app.removePetWindow(hwnd, "wm_destroy")
 		}
 		return 0
 	}
@@ -720,10 +740,7 @@ func (a *App) cancelOtherLeftInputs(active *WindowPet, reason string) {
 	if active == nil {
 		return
 	}
-	a.Mu.RLock()
-	petsSnapshot := append([]*WindowPet(nil), a.Pets...)
-	a.Mu.RUnlock()
-	for _, wp := range petsSnapshot {
+	for _, wp := range a.Pets {
 		if wp == nil || wp == active || wp.HWND == active.HWND || wp.Pet == nil {
 			continue
 		}
@@ -763,12 +780,11 @@ func (a *App) endDrag(wp *WindowPet, reason string) {
 	log.Printf("drag end hwnd=%d pet=%s reason=%s pos=(%.0f,%.0f)", wp.HWND, wp.Pet.InstanceID, reason, wp.Pet.X, wp.Pet.Y)
 }
 
-func (a *App) removePetWindow(hwnd uintptr) int {
-	a.Mu.Lock()
-	defer a.Mu.Unlock()
+func (a *App) removePetWindow(hwnd uintptr, reason string) int {
 	for i, p := range a.Pets {
 		if p.HWND == hwnd {
-			log.Printf("remove window hwnd=%d pet=%s", hwnd, p.Pet.InstanceID)
+			log.Printf("remove window hwnd=%d pet=%s reason=%s", hwnd, p.Pet.InstanceID, reason)
+			a.cancelLeftInput(p, reason)
 			p.Destroy()
 			a.Pets = append(a.Pets[:i], a.Pets[i+1:]...)
 			return len(a.Pets)
@@ -805,8 +821,18 @@ func messageLoop() {
 			log.Printf("message loop stop code=%d", int32(r))
 			break
 		}
+		if m.Hwnd == 0 && m.Message == WM_TIMER && m.WParam == appTimerID {
+			if app != nil {
+				app.tick()
+			}
+			continue
+		}
 		pTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
 		pDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
 	}
+	if app != nil {
+		app.stopUITimer()
+	}
 }
+
 func getSystemMetrics(i int) int32 { r, _, _ := pGetSystemMetrics.Call(uintptr(i)); return int32(r) }
