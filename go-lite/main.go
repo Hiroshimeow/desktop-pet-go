@@ -596,7 +596,7 @@ func (a *App) tick() {
 				wp.Pet.Y = float64(a.ScreenH - wp.FrameH)
 			}
 			wp.Pet.UpdateDragEmotion()
-			wp.Pet.advanceFrame(dt)
+			wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
 		} else {
 			wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
 		}
@@ -613,7 +613,8 @@ func (a *App) drawPet(wp *WindowPet) {
 	strip, srcX, srcY, fw, fh, err := wp.Pet.Store.FrameRect(wp.Pet.Animation, wp.Pet.Frame)
 	if err != nil {
 		log.Printf("frame lookup failed pet=%s anim=%s frame=%d err=%v", wp.Pet.InstanceID, wp.Pet.Animation, wp.Pet.Frame, err)
-		wp.Pet.setAnimation(wp.Pet.Manifest.DefaultAnimation)
+		wp.Pet.Animation = wp.Pet.Manifest.DefaultAnimation
+		wp.Pet.Frame = 0
 		return
 	}
 	stride := wp.FrameW * 4

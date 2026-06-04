@@ -129,7 +129,7 @@ func TestPetMovementAndDragEmotionAreSeparated(t *testing.T) {
 	p.StartDrag()
 	oldX := p.X
 	p.UpdateDragEmotion()
-	p.advanceFrame(0.2)
+	p.Update(0.2, 1000, 128)
 	if p.X != oldX {
 		t.Fatalf("drag emotion should not move by itself")
 	}
