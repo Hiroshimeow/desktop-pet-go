@@ -196,10 +196,14 @@ func main() {
 	rightCommand := flag.String("right-cmd", "", "optional trusted local command run on right click")
 	hookTimeoutMS := flag.Int("hook-timeout-ms", 15000, "timeout for optional click/right trusted local hook commands; <=0 disables timeout")
 	voiceEnabled := flag.Bool("voice", false, "enable local Vietnamese wake/STT/fixed-reply/TTS loop")
+	sayText := flag.String("say", "", "speak text once in Vietnamese or English")
+	readFile := flag.String("read-file", "", "read a local UTF-8 .txt or .md file")
+	readLang := flag.String("read-lang", "auto", "speech language: auto, vi, or en")
 	flag.Parse()
 
 	initLog()
-	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v voice=%v click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *voiceEnabled, *clickCommand != "", *rightCommand != "")
+	voiceRequested := *voiceEnabled || *sayText != "" || *readFile != ""
+	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v voice=%v say=%v read_file=%q read_lang=%q click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *voiceEnabled, *sayText != "", *readFile, *readLang, *clickCommand != "", *rightCommand != "")
 	profile, profileBase, err := loadRuntimeProfile(*profilePath, *assetsPath, *petSelect)
 	if err != nil {
 		fatalExit(1, "load runtime profile failed: %v", err)
@@ -219,9 +223,9 @@ func main() {
 	if err := app.startUITimer(); err != nil {
 		fatalExit(1, "start UI timer failed: %v", err)
 	}
-	if *voiceEnabled {
-		app.startVoiceAsync()
-		defer app.stopVoice()
+	defer app.stopVoice()
+	if voiceRequested {
+		app.startVoiceAsync(*voiceEnabled, *sayText, *readFile, *readLang)
 	}
 	messageLoop()
 }
@@ -517,6 +521,7 @@ func (a *App) handleInputEvent(ev InputEvent) {
 		a.cancelLeftInput(p, "right_click")
 		p.Pet.TriggerAction("right_click")
 		a.runHook(a.RightCommand)
+		a.showVoiceMenu(p.HWND)
 	case InputCancel:
 		a.cancelLeftInput(p, ev.Reason)
 	}

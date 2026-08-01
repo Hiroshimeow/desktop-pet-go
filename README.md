@@ -14,9 +14,9 @@ Tài liệu chi tiết nằm trong `docs/`:
 - `scripts/sprite_row_cutter_gui.py`: GUI cắt từng hàng animation 1x5 đến 1x10 thủ công.
 
 
-Desktop Pet Lite là runtime pet Windows viết bằng Go/Win32. Voice là tùy chọn `-voice`; khi bật, pet tự quản lý một sidecar Python 3.11 đã khóa dependency để chạy VAD/STT/TTS local, không cần service thủ công.
+Desktop Pet Lite là runtime pet Windows viết bằng Go/Win32. Voice/reader là tùy chọn qua `-voice`, `-say` hoặc `-read-file`; pet tự quản lý một sidecar Python 3.11 đã khóa dependency để chạy VAD/STT/TTS local, không cần service thủ công.
 
-## Voice Phase 1 — Vietnamese STS
+## Voice Phase 1–2 — Vietnamese wake + VI/EN speech/reader
 
 Từ thư mục gốc trên Windows 11:
 
@@ -25,7 +25,17 @@ Từ thư mục gốc trên Windows 11:
 .\go-lite\pet-lite.exe -assets .\assets -pet pet5 -voice
 ```
 
-Bootstrap dùng `uv.lock`, tải đúng `faster-whisper-base` CPU/int8 và Piper `vi_VN-vais1000-medium` vào `.voice/`, kiểm tra SHA-256, kiểm tra thiết bị audio và build `go-lite\pet-lite.exe`. Model/cache/audio sinh ra không được commit.
+Bootstrap dùng `uv.lock`, tải đúng `faster-whisper-base` CPU/int8 cùng Piper `vi_VN-vais1000-medium` và `en_US-lessac-medium` vào `.voice/`, kiểm tra SHA-256, kiểm tra thiết bị audio và build `go-lite\pet-lite.exe`. Model/cache/audio sinh ra không được commit.
+
+Phase 2 thêm direct speech và local reader:
+
+```powershell
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -say "Xin chào"
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -say "Hello there"
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -read-file .\note.md -read-lang auto
+```
+
+`-read-lang` nhận `auto|vi|en`; `auto` chọn `vi` khi có dấu tiếng Việt, chọn `en` cho Latin text còn lại và từ chối script ngoài VI/EN. Reader chỉ nhận UTF-8 `.txt`/`.md`, chia đoạn deterministic theo paragraph -> sentence punctuation -> hard cap 350 ký tự rồi phát tuần tự. `-say`/`-read-file` không mở microphone trừ khi truyền thêm `-voice`.
 
 Khi chạy, nói `pet ơi, em là ai` trong một câu; hoặc nói `pet ơi`, rồi hỏi trong 5 giây. Các biến thể wake `pét/bét/bết ơi` và `mèo ơi` được chấp nhận để chịu lỗi STT tiếng Việt. Intent cố định gồm chào hỏi, danh tính, trạng thái, tạm biệt và unknown. Microphone bị bỏ qua trong lúc TTS phát và thêm cooldown ngắn để pet không nghe chính nó.
 

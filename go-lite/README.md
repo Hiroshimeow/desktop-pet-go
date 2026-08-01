@@ -74,14 +74,18 @@ cd E:\git-project\desktop-pet-lite\go-lite
 .\pet-lite.exe -assets ..\assets -pet pet5
 ```
 
-Vietnamese voice Phase 1, chạy từ root repo sau khi bootstrap:
+Voice Phase 1–3, chạy từ root repo sau khi bootstrap:
 
 ```powershell
 .\scripts\setup-voice.ps1
 .\go-lite\pet-lite.exe -assets .\assets -pet pet5 -voice
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -say "Hello there"
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -read-file .\note.txt -read-lang auto
 ```
 
-`-voice` không block UI thread. Sidecar local xử lý WebRTC VAD, faster-whisper CPU/int8, fixed Go matcher và Piper TTS; pet tự tắt sidecar khi thoát. Nếu voice lỗi, visual runtime vẫn chạy và ghi lỗi vào `go-lite\pet-lite.log`.
+`-voice` không block UI thread và giữ nguyên Vietnamese wake/STT/fixed reply của Phase 1. `-say` và `-read-file` dùng Piper VI/EN nhưng không mở microphone nếu không truyền `-voice`. `-read-lang` nhận `auto|vi|en`; reader chỉ nhận UTF-8 `.txt`/`.md` và phát tuần tự các chunk deterministic.
+
+Phase 3 thêm menu chuột phải tối thiểu: `Read clipboard`, `Pause/Resume`, `Skip`, `Stop`. Clipboard được chunk và route VI/EN qua cùng reader path; nếu voice chưa chạy thì `Read clipboard` tự start đúng sidecar hiện có. Pause/resume/skip/stop điều khiển cùng một `sounddevice.OutputStream` speaker, không tạo audio path hoặc sidecar thứ hai. Chuột phải vẫn chạy `right_click` và `-right-cmd` trước khi mở menu. Nếu voice lỗi, visual runtime vẫn chạy và ghi lỗi vào `go-lite/pet-lite.log`.
 
 Kích cỡ pet được đọc từ `pet.json`, không cần truyền lệnh mỗi lần.
 

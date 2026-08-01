@@ -39,6 +39,8 @@ STT_REPO = "Systran/faster-whisper-base"
 STT_REVISION = "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"
 VOICE_NAME = "vi_VN-vais1000-medium"
 VOICE_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/vi/vi_VN/vais1000/medium"
+EN_VOICE_NAME = "en_US-lessac-medium"
+EN_VOICE_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ASSET_ROOT = REPO_ROOT / ".voice"
@@ -47,6 +49,8 @@ TTS_DIR = ASSET_ROOT / "models" / "piper"
 LOG_DIR = ASSET_ROOT / "logs"
 TTS_MODEL = TTS_DIR / f"{VOICE_NAME}.onnx"
 TTS_CONFIG = TTS_DIR / f"{VOICE_NAME}.onnx.json"
+EN_TTS_MODEL = TTS_DIR / f"{EN_VOICE_NAME}.onnx"
+EN_TTS_CONFIG = TTS_DIR / f"{EN_VOICE_NAME}.onnx.json"
 
 EXPECTED_SHA256 = {
     STT_DIR / "config.json": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a",
@@ -55,7 +59,17 @@ EXPECTED_SHA256 = {
     STT_DIR / "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
     TTS_MODEL: "ec7c89e2c85f4d1edc24b6120c18aaf1bda614f06b511567eb9c7c0de15e2dab",
     TTS_CONFIG: "fafb9da1354ed4b77c31af228ed41fb41cd825c14cffa105454b25e6ae751ee0",
+    EN_TTS_MODEL: "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f",
+    EN_TTS_CONFIG: "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0",
 }
+
+
+def tts_asset_paths(lang: str) -> tuple[Path, Path]:
+    if lang == "vi":
+        return TTS_MODEL, TTS_CONFIG
+    if lang == "en":
+        return EN_TTS_MODEL, EN_TTS_CONFIG
+    raise ValueError(f"unsupported speech language {lang!r}; use 'vi' or 'en'")
 
 
 def emit(event_type: str, **payload: Any) -> None:
@@ -147,11 +161,19 @@ def build_turn_metrics(
     }
 
 
-def play_output(audio: np.ndarray, sample_rate: int) -> int:
+def play_output(
+    audio: np.ndarray,
+    sample_rate: int,
+    *,
+    paused: threading.Event | None = None,
+    cancelled: threading.Event | None = None,
+) -> int:
     samples = np.asarray(audio, dtype=np.float32).reshape(-1)
     if samples.size == 0:
         raise RuntimeError("Piper returned empty audio")
 
+    paused = paused or threading.Event()
+    cancelled = cancelled or threading.Event()
     first_audio_ready = threading.Event()
     finished = threading.Event()
     state: dict[str, Any] = {"offset": 0, "first_audio_ns": 0, "status": None}
@@ -172,9 +194,14 @@ def play_output(audio: np.ndarray, sample_rate: int) -> int:
             state["first_audio_ns"] = first_audio_ns
             first_audio_ready.set()
 
+        outdata.fill(0)
+        if cancelled.is_set():
+            raise sd.CallbackStop
+        if paused.is_set():
+            return
+
         offset = int(state["offset"])
         count = min(frames, samples.size - offset)
-        outdata.fill(0)
         if count > 0:
             outdata[:count, 0] = samples[offset : offset + count]
             state["offset"] = offset + count
@@ -192,10 +219,16 @@ def play_output(audio: np.ndarray, sample_rate: int) -> int:
     with stream:
         if not first_audio_ready.wait(timeout=2.0):
             raise RuntimeError("speaker produced no first output callback")
-        if not finished.wait(timeout=timeout):
-            raise RuntimeError("speaker playback timed out")
+        deadline = time.monotonic() + timeout
+        while not finished.wait(timeout=0.05):
+            if paused.is_set():
+                deadline = time.monotonic() + timeout
+            elif time.monotonic() >= deadline:
+                raise RuntimeError("speaker playback timed out")
     if state["status"]:
         diagnostic(f"speaker status: {state['status']}")
+    if cancelled.is_set():
+        return 0
     return int(state["first_audio_ns"])
 
 
@@ -226,11 +259,15 @@ def setup_assets() -> None:
         local_dir=STT_DIR,
         allow_patterns=["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"],
     )
-    for suffix in (".onnx", ".onnx.json"):
-        path = TTS_DIR / f"{VOICE_NAME}{suffix}"
-        if not path.exists() or sha256(path) != EXPECTED_SHA256[path]:
-            diagnostic(f"downloading TTS {VOICE_NAME}{suffix}")
-            download_file(f"{VOICE_BASE_URL}/{VOICE_NAME}{suffix}?download=true", path)
+    for voice_name, base_url in (
+        (VOICE_NAME, VOICE_BASE_URL),
+        (EN_VOICE_NAME, EN_VOICE_BASE_URL),
+    ):
+        for suffix in (".onnx", ".onnx.json"):
+            path = TTS_DIR / f"{voice_name}{suffix}"
+            if not path.exists() or sha256(path) != EXPECTED_SHA256[path]:
+                diagnostic(f"downloading TTS {voice_name}{suffix}")
+                download_file(f"{base_url}/{voice_name}{suffix}?download=true", path)
     verify_assets()
     stt = WhisperModel(
         str(STT_DIR),
@@ -239,17 +276,22 @@ def setup_assets() -> None:
         cpu_threads=0,
         local_files_only=True,
     )
-    voice = PiperVoice.load(TTS_MODEL, TTS_CONFIG)
-    chunks = list(voice.synthesize("Xin chào, kiểm tra giọng nói."))
-    if not chunks or sum(len(chunk.audio_float_array) for chunk in chunks) == 0:
-        raise RuntimeError("Piper self-check produced no audio")
+    for lang, sample in (("vi", "Xin chào, kiểm tra giọng nói."), ("en", "Hello, voice check.")):
+        model, config = tts_asset_paths(lang)
+        voice = PiperVoice.load(model, config)
+        chunks = list(voice.synthesize(sample))
+        if not chunks or sum(len(chunk.audio_float_array) for chunk in chunks) == 0:
+            raise RuntimeError(f"Piper {lang} self-check produced no audio")
     total = sum(path.stat().st_size for path in EXPECTED_SHA256)
-    print(f"voice setup OK: {total / 1024 / 1024:.1f} MiB, STT={STT_REPO}@{STT_REVISION}, TTS={VOICE_NAME}")
+    print(
+        f"voice setup OK: {total / 1024 / 1024:.1f} MiB, STT={STT_REPO}@{STT_REVISION}, "
+        f"TTS={VOICE_NAME},{EN_VOICE_NAME}"
+    )
     del stt
 
 
 class VoiceRuntime:
-    def __init__(self) -> None:
+    def __init__(self, *, listen_enabled: bool = True) -> None:
         verify_assets()
         self.stt = WhisperModel(
             str(STT_DIR),
@@ -258,11 +300,17 @@ class VoiceRuntime:
             cpu_threads=0,
             local_files_only=True,
         )
-        self.tts = PiperVoice.load(TTS_MODEL, TTS_CONFIG)
+        self.tts: dict[str, Any] = {"vi": PiperVoice.load(TTS_MODEL, TTS_CONFIG)}
+        self.listen_enabled = listen_enabled
         self.vad = webrtcvad.Vad(2)
         self.audio_queue: queue.Queue[tuple[int, bytes]] = queue.Queue(maxsize=400)
         self.command_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.speaker_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.stop_event = threading.Event()
+        self.playback_paused = threading.Event()
+        self.playback_cancelled = threading.Event()
+        self.playback_active = threading.Event()
+        self.speaker_thread: threading.Thread | None = None
         self.busy = True
         self.pending: dict[str, dict[str, int]] = {}
         LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -343,8 +391,71 @@ class VoiceRuntime:
         if turn_id:
             self.pending.pop(turn_id, None)
         self.clear_audio()
+        stop_event = getattr(self, "stop_event", None)
+        if stop_event is not None and stop_event.is_set():
+            self.busy = True
+            return
+        if not getattr(self, "listen_enabled", True):
+            self.busy = True
+            emit("state", state="idle")
+            return
         self.busy = False
         emit("state", state="listening")
+
+    def pause_playback(self) -> None:
+        self.playback_paused.set()
+
+    def resume_playback(self) -> None:
+        self.playback_paused.clear()
+
+    def skip_playback(self) -> None:
+        self.playback_cancelled.set()
+
+    def stop_playback(self) -> None:
+        self.playback_cancelled.set()
+
+    def shutdown(self) -> None:
+        self.playback_cancelled.set()
+        self.stop_event.set()
+
+    def start_speaker_worker(self) -> threading.Thread:
+        worker = self.speaker_thread
+        if worker is not None and worker.is_alive():
+            return worker
+        worker = threading.Thread(target=self.speaker_loop, name="voice-speaker", daemon=True)
+        self.speaker_thread = worker
+        worker.start()
+        return worker
+
+    def speaker_loop(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                command = self.speaker_queue.get(timeout=0.03)
+            except queue.Empty:
+                continue
+            if self.stop_event.is_set():
+                break
+            self.playback_active.set()
+            try:
+                self.speak(
+                    str(command.get("turn_id", "")),
+                    str(command.get("text", "")),
+                    str(command.get("lang", "vi")),
+                )
+            finally:
+                self.playback_active.clear()
+            if self.stop_event.wait(COOLDOWN_SECONDS):
+                break
+            if self.speaker_queue.empty():
+                self.resume_listening()
+
+    def tts_for_language(self, lang: str) -> Any:
+        model, config = tts_asset_paths(lang)
+        voice = self.tts.get(lang)
+        if voice is None:
+            voice = PiperVoice.load(model, config)
+            self.tts[lang] = voice
+        return voice
 
     def transcribe(self, pcm: bytes, eos_ns: int) -> None:
         self.busy = True
@@ -374,33 +485,44 @@ class VoiceRuntime:
             emit("state", state="error", detail=f"STT failed: {exc}")
             self.resume_listening()
 
-    def speak(self, turn_id: str, text: str) -> None:
+    def speak(self, turn_id: str, text: str, lang: str = "vi") -> None:
         self.busy = True
-        emit("state", state="speaking", turn_id=turn_id)
+        emit("state", state="speaking", turn_id=turn_id, lang=lang)
+        timing = self.pending.pop(turn_id, None)
         try:
-            chunks = list(self.tts.synthesize(text))
+            voice = self.tts_for_language(lang)
+            chunks = list(voice.synthesize(text))
             if not chunks:
                 raise RuntimeError("Piper returned no audio")
             sample_rate = chunks[0].sample_rate
             audio = np.concatenate([chunk.audio_float_array for chunk in chunks])
             tts_done_ns = time.perf_counter_ns()
-            first_audio_ns = play_output(audio, sample_rate)
-            emit("first_audio", turn_id=turn_id, first_audio_ns=first_audio_ns)
-            timing = self.pending.pop(turn_id, {})
-            metrics = build_turn_metrics(
-                turn_id,
-                timing,
-                tts_done_ns=tts_done_ns,
-                first_audio_ns=first_audio_ns,
+            first_audio_ns = play_output(
+                audio,
+                sample_rate,
+                paused=self.playback_paused,
+                cancelled=self.playback_cancelled,
             )
-            with self.metrics_path.open("a", encoding="utf-8") as output:
-                output.write(json.dumps(metrics, ensure_ascii=False) + "\n")
-            emit("turn_metrics", **metrics)
+            if first_audio_ns:
+                emit("first_audio", turn_id=turn_id, first_audio_ns=first_audio_ns)
+                if timing:
+                    metrics = build_turn_metrics(
+                        turn_id,
+                        timing,
+                        tts_done_ns=tts_done_ns,
+                        first_audio_ns=first_audio_ns,
+                    )
+                    with self.metrics_path.open("a", encoding="utf-8") as output:
+                        output.write(json.dumps(metrics, ensure_ascii=False) + "\n")
+                    emit("turn_metrics", **metrics)
         except Exception as exc:
             diagnostic(f"TTS/playback failed: {exc}")
             emit("state", state="error", detail=f"TTS/playback failed: {exc}")
-        time.sleep(COOLDOWN_SECONDS)
-        self.resume_listening()
+        finally:
+            cancelled = self.playback_cancelled.is_set()
+            self.playback_paused.clear()
+            self.playback_cancelled.clear()
+            emit("speak_done", turn_id=turn_id, lang=lang, cancelled=cancelled)
 
     def handle_commands(self) -> None:
         while True:
@@ -410,11 +532,20 @@ class VoiceRuntime:
                 return
             command_type = command.get("type")
             if command_type == "speak":
-                self.speak(str(command.get("turn_id", "")), str(command.get("text", "")))
+                self.busy = True
+                self.speaker_queue.put(command)
             elif command_type == "resume":
                 self.resume_listening(str(command.get("turn_id", "")))
+            elif command_type == "pause":
+                self.pause_playback()
+            elif command_type == "resume_playback":
+                self.resume_playback()
+            elif command_type == "skip":
+                self.skip_playback()
+            elif command_type == "stop_playback":
+                self.stop_playback()
             elif command_type == "shutdown":
-                self.stop_event.set()
+                self.shutdown()
                 return
             else:
                 diagnostic(f"unknown command: {command_type!r}")
@@ -463,10 +594,22 @@ class VoiceRuntime:
 
     def run(self) -> None:
         threading.Thread(target=self.read_commands, name="voice-stdin", daemon=True).start()
+        speaker = self.start_speaker_worker()
         manifest_path = simulated_manifest_path()
         sequence = load_simulated_sequence(manifest_path) if manifest_path else None
-        emit("state", state="ready", stt=STT_REPO, stt_revision=STT_REVISION, tts=VOICE_NAME)
-        if sequence is None:
+        emit(
+            "state",
+            state="ready",
+            stt=STT_REPO,
+            stt_revision=STT_REVISION,
+            tts=VOICE_NAME,
+            tts_en=EN_VOICE_NAME,
+        )
+        if not getattr(self, "listen_enabled", True):
+            self.busy = True
+            while not self.stop_event.wait(0.03):
+                self.handle_commands()
+        elif sequence is None:
             with sd.RawInputStream(
                 samplerate=SAMPLE_RATE,
                 blocksize=FRAME_SAMPLES,
@@ -486,6 +629,10 @@ class VoiceRuntime:
                 daemon=True,
             ).start()
             self.listen_loop()
+        self.shutdown()
+        speaker.join(timeout=2.0)
+        if speaker.is_alive():
+            diagnostic("voice speaker worker did not stop before process exit")
         emit("state", state="stopped")
 
 
@@ -493,6 +640,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--list-devices", action="store_true")
+    parser.add_argument("--no-listen", action="store_true")
     args = parser.parse_args()
     try:
         if args.setup:
@@ -501,7 +649,7 @@ def main() -> int:
         if args.list_devices:
             print(sd.query_devices())
             return 0
-        VoiceRuntime().run()
+        VoiceRuntime(listen_enabled=not args.no_listen).run()
         return 0
     except Exception as exc:
         diagnostic(f"voice sidecar failed: {exc}")

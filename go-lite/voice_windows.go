@@ -36,21 +36,50 @@ type voiceCommand struct {
 	Type   string `json:"type"`
 	TurnID string `json:"turn_id,omitempty"`
 	Text   string `json:"text,omitempty"`
+	Lang   string `json:"lang,omitempty"`
+}
+
+type voiceSpeakRequest struct {
+	Text string
+	Lang string
 }
 
 type VoiceController struct {
-	events  chan<- voiceEvent
-	session *voice.Session
-	cancel  context.CancelFunc
-	stdin   io.WriteCloser
-	done    chan struct{}
-	mu      sync.Mutex
+	events     chan<- voiceEvent
+	session    *voice.Session
+	listen     bool
+	queue      []voiceSpeakRequest
+	activeTurn string
+	nextTurn   int
+	ready      bool
+	paused     bool
+	cancel     context.CancelFunc
+	stdin      io.WriteCloser
+	done       chan struct{}
+	mu         sync.Mutex
 }
 
-func (a *App) startVoiceAsync() {
+func (a *App) startVoiceAsync(listen bool, sayText, readFile, readLang string) {
+	requests, err := buildStartupVoiceRequests(sayText, readFile, readLang)
+	if err != nil {
+		log.Printf("voice request ignored: %v", err)
+	}
+	if !listen && len(requests) == 0 {
+		return
+	}
+	a.startVoiceController(listen, requests)
+}
+
+func (a *App) startVoiceController(listen bool, requests []voiceSpeakRequest) {
+	if a.Voice != nil && !a.Voice.isStopped() {
+		a.Voice.enqueueRequests(requests)
+		return
+	}
 	controller := &VoiceController{
 		events:  a.VoiceEvents,
 		session: voice.NewSession(5 * time.Second),
+		listen:  listen,
+		queue:   append([]voiceSpeakRequest(nil), requests...),
 		done:    make(chan struct{}),
 	}
 	a.Voice = controller
@@ -81,7 +110,11 @@ func (v *VoiceController) run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	v.cancel = cancel
 	script := filepath.Join(sidecarDir, "voice_sidecar.py")
-	cmd := exec.CommandContext(ctx, "uv", "run", "--project", sidecarDir, "--frozen", "python", script)
+	args := []string{"run", "--project", sidecarDir, "--frozen", "python", script}
+	if !v.listen {
+		args = append(args, "--no-listen")
+	}
+	cmd := exec.CommandContext(ctx, "uv", args...)
 	cmd.Dir = sidecarDir
 	cmd.Env = append(os.Environ(), "VIRTUAL_ENV=")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -173,14 +206,120 @@ func (v *VoiceController) resume(turnID string) {
 	}
 }
 
-func (v *VoiceController) speak(turnID, text string) {
-	if err := v.send(voiceCommand{Type: "speak", TurnID: turnID, Text: text}); err != nil {
+func (v *VoiceController) speak(turnID, text, lang string) bool {
+	if v.activeTurn != "" {
+		log.Printf("voice speak ignored while turn=%s is active", v.activeTurn)
+		return false
+	}
+	if err := v.send(voiceCommand{Type: "speak", TurnID: turnID, Text: text, Lang: lang}); err != nil {
 		log.Printf("voice speak failed: %v", err)
+		return false
+	}
+	v.activeTurn = turnID
+	v.paused = false
+	return true
+}
+
+func (v *VoiceController) enqueueRequests(requests []voiceSpeakRequest) {
+	if len(requests) == 0 {
+		return
+	}
+	v.queue = append(v.queue, requests...)
+	v.dispatchNext()
+}
+
+func (v *VoiceController) dispatchNext() {
+	if !v.ready || v.activeTurn != "" || len(v.queue) == 0 {
+		return
+	}
+	request := v.queue[0]
+	v.nextTurn++
+	turnID := fmt.Sprintf("reader-%d", v.nextTurn)
+	if !v.speak(turnID, request.Text, request.Lang) {
+		return
+	}
+	v.queue = v.queue[1:]
+}
+
+func (v *VoiceController) completeSpeak(turnID string) {
+	if turnID == "" || turnID != v.activeTurn {
+		return
+	}
+	v.activeTurn = ""
+	v.paused = false
+	v.dispatchNext()
+}
+
+func (v *VoiceController) pausePlayback() {
+	if v == nil || v.activeTurn == "" || v.paused {
+		return
+	}
+	if err := v.send(voiceCommand{Type: "pause"}); err != nil {
+		log.Printf("voice pause failed: %v", err)
+		return
+	}
+	v.paused = true
+}
+
+func (v *VoiceController) resumePlayback() {
+	if v == nil || v.activeTurn == "" || !v.paused {
+		return
+	}
+	if err := v.send(voiceCommand{Type: "resume_playback"}); err != nil {
+		log.Printf("voice playback resume failed: %v", err)
+		return
+	}
+	v.paused = false
+}
+
+func (v *VoiceController) skipCurrent() {
+	if v == nil || v.activeTurn == "" {
+		return
+	}
+	v.paused = false
+	if err := v.send(voiceCommand{Type: "skip"}); err != nil {
+		log.Printf("voice skip failed: %v", err)
+	}
+}
+
+func (v *VoiceController) stopPlayback() {
+	if v == nil {
+		return
+	}
+	v.queue = nil
+	v.paused = false
+	if v.activeTurn == "" {
+		return
+	}
+	if err := v.send(voiceCommand{Type: "stop_playback"}); err != nil {
+		log.Printf("voice stop failed: %v", err)
+	}
+}
+
+func (v *VoiceController) isPaused() bool {
+	return v != nil && v.paused
+}
+
+func (v *VoiceController) isStopped() bool {
+	if v == nil {
+		return true
+	}
+	if v.done == nil {
+		return false
+	}
+	select {
+	case <-v.done:
+		return true
+	default:
+		return false
 	}
 }
 
 func (v *VoiceController) stop() {
 	_ = v.send(voiceCommand{Type: "shutdown"})
+	if v.done == nil {
+		return
+	}
 	select {
 	case <-v.done:
 		return
@@ -211,6 +350,8 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 		switch event.State {
 		case "ready":
 			log.Printf("voice ready")
+			a.Voice.ready = true
+			a.Voice.dispatchNext()
 		case "listening":
 			a.triggerVoiceIntent(petbrain.IntentVoiceListening)
 		case "thinking":
@@ -231,12 +372,56 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 		if reply.Intent == voice.IntentUnknown {
 			a.triggerVoiceIntent(petbrain.IntentVoiceUnknown)
 		}
-		a.Voice.speak(event.TurnID, reply.Text)
+		a.Voice.speak(event.TurnID, reply.Text, "vi")
+	case "speak_done":
+		a.Voice.completeSpeak(event.TurnID)
 	case "first_audio":
 		log.Printf("voice first audio turn=%s first_audio_ns=%d", event.TurnID, event.FirstAudioNS)
 	case "turn_metrics":
 		log.Printf("voice metrics turn=%s latency_ms=%.1f eos_ns=%d stt_done_ns=%d tts_done_ns=%d first_audio_ns=%d", event.TurnID, voiceLatencyMS(event), event.EOSNS, event.STTDoneNS, event.TTSDoneNS, event.FirstAudioNS)
 	}
+}
+
+func buildStartupVoiceRequests(sayText, readFile, readLang string) ([]voiceSpeakRequest, error) {
+	if sayText == "" && readFile == "" {
+		return nil, nil
+	}
+	requests := make([]voiceSpeakRequest, 0, 8)
+	if sayText != "" {
+		lang, err := voice.ResolveLanguage(sayText, readLang)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, voiceSpeakRequest{Text: sayText, Lang: lang})
+	}
+	if readFile != "" {
+		text, err := voice.ReadTextFile(readFile)
+		if err != nil {
+			return requests, err
+		}
+		readerRequests, err := buildVoiceRequestsFromText(text, readLang)
+		if err != nil {
+			return requests, fmt.Errorf("read %q: %w", readFile, err)
+		}
+		requests = append(requests, readerRequests...)
+	}
+	return requests, nil
+}
+
+func buildVoiceRequestsFromText(text, readLang string) ([]voiceSpeakRequest, error) {
+	chunks := voice.ChunkText(text, 350)
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("text contains no readable text")
+	}
+	requests := make([]voiceSpeakRequest, 0, len(chunks))
+	for _, chunk := range chunks {
+		lang, err := voice.ResolveLanguage(chunk, readLang)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, voiceSpeakRequest{Text: chunk, Lang: lang})
+	}
+	return requests, nil
 }
 
 func voiceLatencyMS(event voiceEvent) float64 {

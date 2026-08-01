@@ -1,14 +1,26 @@
 import json
 import os
 import queue
+import sys
 import tempfile
 import threading
+import types
 import unittest
 import wave
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+
+try:
+    import sounddevice  # noqa: F401
+except OSError:
+    sounddevice_stub = types.ModuleType("sounddevice")
+    sounddevice_stub.RawInputStream = None
+    sounddevice_stub.OutputStream = None
+    sounddevice_stub.CallbackStop = RuntimeError
+    sounddevice_stub.query_devices = lambda: []
+    sys.modules["sounddevice"] = sounddevice_stub
 
 from voice_sidecar import (
     END_SILENCE_FRAMES,
@@ -20,12 +32,62 @@ from voice_sidecar import (
     frame_is_speech,
     load_simulated_sequence,
     simulated_manifest_path,
+    tts_asset_paths,
 )
 
 
 class AlwaysSpeech:
     def is_speech(self, _frame: bytes, _sample_rate: int) -> bool:
         return True
+
+
+class LanguageRoutingTest(unittest.TestCase):
+    def test_vi_en_use_distinct_piper_assets(self) -> None:
+        vi_model, vi_config = tts_asset_paths("vi")
+        en_model, en_config = tts_asset_paths("en")
+        self.assertIn("vi_VN-vais1000-medium", vi_model.name)
+        self.assertIn("vi_VN-vais1000-medium", vi_config.name)
+        self.assertIn("en_US-lessac-medium", en_model.name)
+        self.assertIn("en_US-lessac-medium", en_config.name)
+        self.assertNotEqual(vi_model, en_model)
+        with self.assertRaisesRegex(ValueError, "unsupported speech language"):
+            tts_asset_paths("ja")
+
+    def test_direct_speak_routes_language_and_completes_without_stt_metrics(self) -> None:
+        class FakeChunk:
+            sample_rate = SAMPLE_RATE
+            audio_float_array = np.ones(32, dtype=np.float32)
+
+        class FakeVoice:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def synthesize(self, text: str):
+                self.calls.append(text)
+                return [FakeChunk()]
+
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.busy = True
+        runtime.pending = {}
+        runtime.audio_queue = queue.Queue()
+        runtime.listen_enabled = False
+        runtime.playback_paused = threading.Event()
+        runtime.playback_cancelled = threading.Event()
+        runtime.tts = {"vi": FakeVoice(), "en": FakeVoice()}
+        events: list[tuple[str, dict[str, object]]] = []
+        with (
+            patch("voice_sidecar.play_output", return_value=123),
+            patch("voice_sidecar.emit", side_effect=lambda event_type, **payload: events.append((event_type, payload))),
+            patch("voice_sidecar.time.sleep", return_value=None),
+        ):
+            runtime.speak("direct-en", "Hello", "en")
+            runtime.speak("direct-vi", "Xin chào", "vi")
+
+        self.assertEqual(runtime.tts["vi"].calls, ["Xin chào"])
+        self.assertEqual(runtime.tts["en"].calls, ["Hello"])
+        done_turns = [payload["turn_id"] for event_type, payload in events if event_type == "speak_done"]
+        self.assertEqual(done_turns, ["direct-en", "direct-vi"])
+        self.assertFalse(any(event_type == "turn_metrics" for event_type, _ in events))
 
 
 class VoiceMetricTest(unittest.TestCase):
@@ -91,6 +153,13 @@ class SimulatedInputTest(unittest.TestCase):
         self.assertIsNone(simulated_manifest_path({}))
 
     def test_default_run_still_opens_raw_microphone(self) -> None:
+        class FakeWorker:
+            def join(self, timeout: float | None = None) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
         runtime = VoiceRuntime.__new__(VoiceRuntime)
         runtime.audio_queue = queue.Queue(maxsize=400)
         runtime.command_queue = queue.Queue()
@@ -102,6 +171,8 @@ class SimulatedInputTest(unittest.TestCase):
             patch("voice_sidecar.sd.RawInputStream") as raw_input,
             patch("voice_sidecar.emit"),
             patch("voice_sidecar.threading.Thread.start"),
+            patch.object(runtime, "start_speaker_worker", return_value=FakeWorker()),
+            patch.object(runtime, "shutdown"),
             patch.object(runtime, "listen_loop"),
         ):
             runtime.run()
@@ -134,6 +205,45 @@ class FrameSpeechGateTest(unittest.TestCase):
     def test_allows_audible_frame_to_reach_vad(self) -> None:
         audible = np.full(480, 512, dtype=np.int16).tobytes()
         self.assertTrue(frame_is_speech(audible, AlwaysSpeech()))
+
+
+class PlaybackControlTest(unittest.TestCase):
+    def make_runtime(self) -> VoiceRuntime:
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.stop_event = threading.Event()
+        runtime.speaker_queue = queue.Queue()
+        runtime.playback_paused = threading.Event()
+        runtime.playback_cancelled = threading.Event()
+        runtime.playback_active = threading.Event()
+        runtime.speaker_thread = None
+        return runtime
+
+    def test_pause_resume_are_idempotent(self) -> None:
+        runtime = self.make_runtime()
+        runtime.pause_playback()
+        runtime.pause_playback()
+        self.assertTrue(runtime.playback_paused.is_set())
+        runtime.resume_playback()
+        runtime.resume_playback()
+        self.assertFalse(runtime.playback_paused.is_set())
+
+    def test_skip_and_stop_cancel_active_playback(self) -> None:
+        runtime = self.make_runtime()
+        runtime.playback_active.set()
+        runtime.skip_playback()
+        self.assertTrue(runtime.playback_cancelled.is_set())
+        runtime.playback_cancelled.clear()
+        runtime.stop_playback()
+        runtime.stop_playback()
+        self.assertTrue(runtime.playback_cancelled.is_set())
+
+    def test_single_speaker_worker_is_reused_and_shutdown_joins_it(self) -> None:
+        runtime = self.make_runtime()
+        worker = runtime.start_speaker_worker()
+        self.assertIs(worker, runtime.start_speaker_worker())
+        runtime.shutdown()
+        worker.join(timeout=1.0)
+        self.assertFalse(worker.is_alive())
 
 
 if __name__ == "__main__":
