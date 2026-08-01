@@ -2,6 +2,8 @@
 
 Tài liệu này là requirement baseline cho mọi thay đổi TTS, STT, reader, audio, voice menu, model/cache và integration liên quan tới desktop pet. Mọi plan hoặc implementation voice phải trace về các requirement ID dưới đây.
 
+> **Operator scope từ Phase 2 (2026-08-02):** roadmap active là `docs/VOICE_ROADMAP.md`: chỉ Việt/Anh, bỏ PDF/OCR/Japanese/VOICEVOX, thêm voice command và local-model conversation. Các dòng lịch sử bên dưới mâu thuẫn với scope này không áp dụng cho Phase 2 trở đi.
+
 ## 1. Boundary kiến trúc
 
 **VOICE-REQ-001 — Optional sidecar-first architecture**
