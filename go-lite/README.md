@@ -1,6 +1,6 @@
 # desktop-pet-lite-go
 
-Go/Win32 desktop pet runner. Đây là runtime chính. Python đã bị loại khỏi runtime; chỉ còn Go exe.
+Go/Win32 desktop pet runner. Đây là runtime chính. Voice là opt-in; Go exe tự start/stop sidecar Python 3.11 đã pin, không cần service riêng.
 
 ## Runtime files
 
@@ -67,10 +67,21 @@ sit_idle.png    ngồi nghỉ nếu pet có asset này
 
 ## Run
 
+Visual-only:
+
 ```powershell
 cd E:\git-project\desktop-pet-lite\go-lite
 .\pet-lite.exe -assets ..\assets -pet pet5
 ```
+
+Vietnamese voice Phase 1, chạy từ root repo sau khi bootstrap:
+
+```powershell
+.\scripts\setup-voice.ps1
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -voice
+```
+
+`-voice` không block UI thread. Sidecar local xử lý WebRTC VAD, faster-whisper CPU/int8, fixed Go matcher và Piper TTS; pet tự tắt sidecar khi thoát. Nếu voice lỗi, visual runtime vẫn chạy và ghi lỗi vào `go-lite\pet-lite.log`.
 
 Kích cỡ pet được đọc từ `pet.json`, không cần truyền lệnh mỗi lần.
 

@@ -43,11 +43,11 @@ Routing mặc định:
 
 **VOICE-REQ-021 — STT routing mặc định**
 
-STT mặc định dùng whisper.cpp local CPU với model do user cài trong `models/stt/whisper/` hoặc path cấu hình rõ.
+Phase 1 fixed-response tiếng Việt dùng duy nhất sidecar `faster-whisper-base` CPU/int8 đã pin revision và được chọn bằng benchmark Windows. Hướng `whisper.cpp` chỉ còn áp dụng cho reader/command phase sau nếu được đo lại và quyết định riêng.
 
-**VOICE-REQ-022 — Adapter contract stable**
+**VOICE-REQ-022 — Ranh giới backend**
 
-TTS/STT backend phải đi qua interface/contract ổn định. Thêm backend mới không được chạm vào render loop hoặc pet movement logic.
+Phase 1 không cần provider registry hoặc interface một implementation: Go gọi trực tiếp một sidecar local đã pin, tách khỏi render loop và pet movement. Chỉ thêm hoặc thay backend khi có quyết định mới dựa trên benchmark thực tế.
 
 ## 4. Responsiveness và concurrency
 
@@ -99,9 +99,9 @@ Transcript STT chỉ được map sang enum `VoiceCommand`. Transcript không ba
 
 Transcript không khớp grammar phải được log và bỏ qua hoặc hỏi lại sau này. Không fallback sang command execution.
 
-**VOICE-REQ-052 — Push-to-talk/listen-once trước**
+**VOICE-REQ-052 — Voice phải opt-in và có bounded listening**
 
-Không always-listening trong phase đầu. CPU và false positive risk quá cao. Phase đầu dùng listen-once/push-to-talk.
+Reader/command STT vẫn dùng listen-once/push-to-talk. Riêng Phase 1 fixed-response STS được phép wake-listening local khi user bật `-voice`: WebRTC VAD chỉ mở STT sau speech, không chạy transcript liên tục, không map transcript sang shell/hook, microphone bị bỏ qua khi TTS phát và có cooldown ngắn trước khi nghe lại. Visual pet phải tiếp tục chạy nếu voice setup/device/model lỗi.
 
 ## 7. Command execution boundary
 
@@ -165,7 +165,7 @@ Test mới nên ghi trong tên hoặc comment requirement liên quan, ví dụ c
 
 **VOICE-REQ-093 — Dependency spike trước implementation nặng**
 
-Piper, VOICEVOX, whisper.cpp, PDF library, OmniVoice/NeuTTS đều phải qua spike/benchmark riêng trước khi thành supported backend.
+Phase 1 đã so sánh `faster-whisper-small` và `faster-whisper-base` trên Windows rồi chọn duy nhất `base` theo latency đo được; Piper cũng phải qua setup/load/playback check. Các hướng reader/command như whisper.cpp, cùng VOICEVOX, PDF library và OmniVoice/NeuTTS, vẫn cần spike/benchmark riêng trước khi được hỗ trợ.
 
 ## 11. Documentation consistency
 

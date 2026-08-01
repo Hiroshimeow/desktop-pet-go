@@ -55,6 +55,13 @@ func (p *Pet) TriggerAction(actionName string) {
 	p.handleV2Action(actionName)
 }
 
+func (p *Pet) TriggerIntent(intent pet.Intent) {
+	if p == nil || p.V2 == nil {
+		return
+	}
+	p.syncFromV2(p.V2.PlayIntent(intent, time.Now()))
+}
+
 func (p *Pet) StartDrag() {
 	p.DragMode = true
 	p.handleV2Action("drag_start")

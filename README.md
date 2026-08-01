@@ -14,7 +14,38 @@ Tài liệu chi tiết nằm trong `docs/`:
 - `scripts/sprite_row_cutter_gui.py`: GUI cắt từng hàng animation 1x5 đến 1x10 thủ công.
 
 
-Desktop Pet Lite là runtime pet Windows viết bằng Go thuần Win32. Python chỉ dùng cho tool xử lý asset/test asset, không nằm trong runtime.
+Desktop Pet Lite là runtime pet Windows viết bằng Go/Win32. Voice là tùy chọn `-voice`; khi bật, pet tự quản lý một sidecar Python 3.11 đã khóa dependency để chạy VAD/STT/TTS local, không cần service thủ công.
+
+## Voice Phase 1 — Vietnamese STS
+
+Từ thư mục gốc trên Windows 11:
+
+```powershell
+.\scripts\setup-voice.ps1
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -voice
+```
+
+Bootstrap dùng `uv.lock`, tải đúng `faster-whisper-base` CPU/int8 và Piper `vi_VN-vais1000-medium` vào `.voice/`, kiểm tra SHA-256, kiểm tra thiết bị audio và build `go-lite\pet-lite.exe`. Model/cache/audio sinh ra không được commit.
+
+Khi chạy, nói `pet ơi, em là ai` trong một câu; hoặc nói `pet ơi`, rồi hỏi trong 5 giây. Các biến thể wake `pét/bét/bết ơi` và `mèo ơi` được chấp nhận để chịu lỗi STT tiếng Việt. Intent cố định gồm chào hỏi, danh tính, trạng thái, tạm biệt và unknown. Microphone bị bỏ qua trong lúc TTS phát và thêm cooldown ngắn để pet không nghe chính nó.
+
+Nếu `uv`, model, microphone hoặc speaker lỗi, pet hình ảnh vẫn tiếp tục chạy; xem `go-lite\pet-lite.log` để lấy lỗi có hành động khắc phục. Latency từng lượt được ghi tại `.voice\logs\turns.jsonl` và trong `pet-lite.log`.
+
+Acceptance tự động có thể thay microphone bằng chuỗi WAV test mà vẫn đi qua VAD/STT thật. Đặt các WAV 16 kHz, 16-bit mono PCM và manifest dưới `.voice/`, ví dụ:
+
+```json
+{"items":[{"wav":"wake-question.wav","delay_ms":500},{"wav":"wake-only.wav"},{"wav":"follow-up.wav","delay_ms":500}]}
+```
+
+Path WAV là tương đối với manifest. Chạy trên PowerShell:
+
+```powershell
+$env:DESKTOP_PET_VOICE_TEST_WAV_SEQUENCE = (Resolve-Path .\.voice\acceptance\sequence.json)
+.\go-lite\pet-lite-debug.exe -assets .\assets -pet pet5 -voice
+Remove-Item Env:DESKTOP_PET_VOICE_TEST_WAV_SEQUENCE
+```
+
+Không đặt biến môi trường này khi dùng microphone thật; path production vẫn mở `RawInputStream` mặc định.
 
 ## Chạy nhanh
 

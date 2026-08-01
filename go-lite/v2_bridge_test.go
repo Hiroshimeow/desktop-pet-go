@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 	"time"
+
+	petbrain "desktop-pet-lite-go/internal/pet"
 )
 
 func TestCompileLegacyManifestV2AndPetActions(t *testing.T) {
@@ -55,5 +57,29 @@ func TestPetUpdateUsesV2Locomotion(t *testing.T) {
 	}
 	if pet.X <= 100 {
 		t.Fatalf("v2 locomotion should move pet right, got x=%f", pet.X)
+	}
+}
+
+func TestVoiceIntentsResolveWithSafeFallback(t *testing.T) {
+	manifest := testManifest(t)
+	store, err := LoadSpriteStore(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPet("voice-intent", "Voice Intent", store.Manifest, store, 1000, 800, 128, 128)
+	for _, intent := range []petbrain.Intent{
+		petbrain.IntentVoiceListening,
+		petbrain.IntentVoiceThinking,
+		petbrain.IntentVoiceSpeaking,
+		petbrain.IntentVoiceUnknown,
+		petbrain.IntentVoiceError,
+	} {
+		p.TriggerIntent(intent)
+		if p.Animation == "" {
+			t.Fatalf("intent %q resolved empty animation", intent)
+		}
+		if store.Manifest.Animations[p.Animation].Locomotion {
+			t.Fatalf("intent %q resolved locomotion animation %q", intent, p.Animation)
+		}
 	}
 }

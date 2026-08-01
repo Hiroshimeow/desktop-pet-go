@@ -1,6 +1,8 @@
 # CPU-only Voice + Reader System Implementation Plan
 
-Status: design plan for review. Do not implement runtime code until this plan is approved.
+Status: historical reader/command design plan.
+
+Superseding note (2026-07-31): task `desktop-pet-sts-phase1` implements only the approved fixed-response Vietnamese STS slice. Its opt-in local wake-listening path is governed by updated `VOICE-REQ-052`; all “Phase 4 listen-once only” statements below still apply to the broader reader/command system, not to this bounded STS loop.
 
 Requirement source of truth: `docs/VOICE_REQUIREMENTS.md`.
 

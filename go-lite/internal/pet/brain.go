@@ -16,6 +16,11 @@ const (
 	IntentDragEnd        Intent = "drag_end"
 	IntentLocomotionSlow Intent = "locomotion_slow"
 	IntentLocomotionFast Intent = "locomotion_fast"
+	IntentVoiceListening Intent = "voice_listening"
+	IntentVoiceThinking  Intent = "voice_thinking"
+	IntentVoiceSpeaking  Intent = "voice_speaking"
+	IntentVoiceUnknown   Intent = "voice_unknown"
+	IntentVoiceError     Intent = "voice_error"
 )
 
 type BrainState string

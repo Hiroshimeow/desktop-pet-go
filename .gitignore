@@ -41,6 +41,8 @@ assets/pets/pet5/*_history.jsonl
 assets/pets/pet5/animations/*_history.jsonl
 
 # Voice models and generated voice/cache artifacts
+.voice/
+voice-sidecar/.venv/
 models/
 go-lite/cache/
 *.wav

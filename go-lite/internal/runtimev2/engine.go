@@ -71,6 +71,11 @@ func (e *Engine) SetState(state State) {
 
 func (e *Engine) State() State { return e.state }
 
+func (e *Engine) PlayIntent(intent pet.Intent, now time.Time) StepResult {
+	decision := pet.Decision{Intent: intent, ShouldResolve: true}
+	return e.resolveDecision(StepResult{Decision: decision}, decision, now)
+}
+
 func (e *Engine) HandleRaw(raw input.RawEvent) StepResult {
 	gestures := e.mapper.Handle(raw)
 	result := StepResult{Gestures: gestures, Player: e.player.Snapshot()}

@@ -131,5 +131,10 @@ func defaultRuntimeV2Intents() map[string]animation.RawIntentProfile {
 		"drag_end":        {Fallbacks: []animation.RawIntentQuery{{Required: []string{"reaction"}, Preferred: []string{"positive", "friendly", "recover"}}, {Required: []string{"reaction"}}, {Required: []string{"idle"}}}},
 		"locomotion_slow": {Fallbacks: []animation.RawIntentQuery{{Required: []string{"locomotion"}, Preferred: []string{"slow"}}, {Required: []string{"locomotion"}}, {Required: []string{"idle"}}}},
 		"locomotion_fast": {Fallbacks: []animation.RawIntentQuery{{Required: []string{"locomotion"}, Preferred: []string{"fast"}}, {Required: []string{"locomotion"}, Preferred: []string{"slow"}}, {Required: []string{"locomotion"}}, {Required: []string{"idle"}}}},
+		"voice_listening": {Fallbacks: []animation.RawIntentQuery{{Required: []string{"state", "stationary"}, Preferred: []string{"curious"}}, {Required: []string{"idle"}}}},
+		"voice_thinking":  {Fallbacks: []animation.RawIntentQuery{{Required: []string{"state", "stationary"}, Preferred: []string{"curious"}}, {Required: []string{"idle"}}}},
+		"voice_speaking":  {Fallbacks: []animation.RawIntentQuery{{Required: []string{"reaction"}, Preferred: []string{"friendly", "positive"}}, {Required: []string{"idle"}}}},
+		"voice_unknown":   {Fallbacks: []animation.RawIntentQuery{{Required: []string{"emotion"}, Preferred: []string{"curious"}}, {Required: []string{"state", "stationary"}}, {Required: []string{"idle"}}}},
+		"voice_error":     {Fallbacks: []animation.RawIntentQuery{{Required: []string{"emotion"}, Preferred: []string{"negative"}}, {Required: []string{"idle"}}}},
 	}
 }

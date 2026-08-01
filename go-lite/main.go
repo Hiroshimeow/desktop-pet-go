@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"syscall"
 	"time"
@@ -167,12 +168,17 @@ type App struct {
 	RightCommand string
 	HookTimeout  time.Duration
 	HookSem      chan struct{}
+	VoiceEvents  chan voiceEvent
+	Voice        *VoiceController
+	TimerID      uintptr
 	LastTick     time.Time
 }
 
 var app *App
 
 func main() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	debug.SetGCPercent(25)
 	defer func() {
 		if r := recover(); r != nil {
@@ -189,16 +195,17 @@ func main() {
 	clickCommand := flag.String("click-cmd", "", "optional trusted local command run on left click")
 	rightCommand := flag.String("right-cmd", "", "optional trusted local command run on right click")
 	hookTimeoutMS := flag.Int("hook-timeout-ms", 15000, "timeout for optional click/right trusted local hook commands; <=0 disables timeout")
+	voiceEnabled := flag.Bool("voice", false, "enable local Vietnamese wake/STT/fixed-reply/TTS loop")
 	flag.Parse()
 
 	initLog()
-	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *clickCommand != "", *rightCommand != "")
+	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v voice=%v click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *voiceEnabled, *clickCommand != "", *rightCommand != "")
 	profile, profileBase, err := loadRuntimeProfile(*profilePath, *assetsPath, *petSelect)
 	if err != nil {
 		fatalExit(1, "load runtime profile failed: %v", err)
 	}
 	hookTimeout := time.Duration(*hookTimeoutMS) * time.Millisecond
-	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand, HookTimeout: hookTimeout, HookSem: make(chan struct{}, 2), LastTick: time.Now()}
+	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), VoiceEvents: make(chan voiceEvent, 64), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand, HookTimeout: hookTimeout, HookSem: make(chan struct{}, 2), LastTick: time.Now()}
 	log.Printf("screen size=%dx%d selected_groups=%d", app.ScreenW, app.ScreenH, len(profile.ActivePets))
 	if *catalog {
 		if err := app.printCatalogOnly(profileBase, *assetsPath); err != nil {
@@ -211,6 +218,10 @@ func main() {
 	}
 	if err := app.startUITimer(); err != nil {
 		fatalExit(1, "start UI timer failed: %v", err)
+	}
+	if *voiceEnabled {
+		app.startVoiceAsync()
+		defer app.stopVoice()
 	}
 	messageLoop()
 }
@@ -519,7 +530,8 @@ func (a *App) startUITimer() error {
 	if r == 0 {
 		return fmt.Errorf("SetTimer failed: %w", err)
 	}
-	log.Printf("ui timer started id=%d interval_ms=%d", appTimerID, appTimerMS)
+	a.TimerID = r
+	log.Printf("ui timer started requested_id=%d actual_id=%d interval_ms=%d", appTimerID, a.TimerID, appTimerMS)
 	return nil
 }
 
@@ -527,8 +539,15 @@ func (a *App) stopUITimer() {
 	if a == nil {
 		return
 	}
-	pKillTimer.Call(0, appTimerID)
-	log.Printf("ui timer stopped id=%d", appTimerID)
+	if a.TimerID != 0 {
+		pKillTimer.Call(0, a.TimerID)
+		log.Printf("ui timer stopped id=%d", a.TimerID)
+		a.TimerID = 0
+	}
+}
+
+func (a *App) isTimerMessage(m msg) bool {
+	return a != nil && a.TimerID != 0 && m.Hwnd == 0 && m.Message == WM_TIMER && m.WParam == a.TimerID
 }
 
 func (a *App) tick() {
@@ -539,6 +558,7 @@ func (a *App) tick() {
 	}()
 
 	a.processInputEvents()
+	a.processVoiceEvents()
 	now := time.Now()
 	dt := now.Sub(a.LastTick).Seconds()
 	if dt <= 0 || dt > 0.05 {
@@ -822,10 +842,8 @@ func messageLoop() {
 			log.Printf("message loop stop code=%d", int32(r))
 			break
 		}
-		if m.Hwnd == 0 && m.Message == WM_TIMER && m.WParam == appTimerID {
-			if app != nil {
-				app.tick()
-			}
+		if app != nil && app.isTimerMessage(m) {
+			app.tick()
 			continue
 		}
 		pTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
