@@ -377,17 +377,15 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 			a.Voice.resume(event.TurnID)
 			return
 		}
-		if command, matched := voice.ParseCommand(event.Text); matched {
+		route, command := voice.RouteTranscript(event.Text)
+		if route == voice.RouteCommand {
 			a.dispatchVoiceCommand(event, command)
 			return
 		}
-		if reply.Intent == voice.IntentUnknown {
-			a.triggerVoiceIntent(petbrain.IntentVoiceUnknown)
-			history := append([]voice.ChatMessage(nil), a.Voice.chatHistory...)
-			go a.Voice.requestChat(event.TurnID, event.Text, reply.Text, history)
-			return
-		}
-		a.Voice.speak(event.TurnID, reply.Text, "vi")
+		a.triggerVoiceIntent(petbrain.IntentVoiceUnknown)
+		history := append([]voice.ChatMessage(nil), a.Voice.chatHistory...)
+		go a.Voice.requestChat(event.TurnID, event.Text, reply.Text, history)
+		return
 	case "chat_reply":
 		a.handleChatReply(event)
 	case "chat_error":
