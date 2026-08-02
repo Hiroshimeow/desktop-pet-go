@@ -74,7 +74,7 @@ cd E:\git-project\desktop-pet-lite\go-lite
 .\pet-lite.exe -assets ..\assets -pet pet5
 ```
 
-Voice Phase 1–3, chạy từ root repo sau khi bootstrap:
+Voice Phase 1–5, chạy từ root repo sau khi bootstrap:
 
 ```powershell
 .\scripts\setup-voice.ps1
@@ -86,6 +86,31 @@ Voice Phase 1–3, chạy từ root repo sau khi bootstrap:
 `-voice` không block UI thread và giữ nguyên Vietnamese wake/STT/fixed reply của Phase 1. `-say` và `-read-file` dùng Piper VI/EN nhưng không mở microphone nếu không truyền `-voice`. `-read-lang` nhận `auto|vi|en`; reader chỉ nhận UTF-8 `.txt`/`.md` và phát tuần tự các chunk deterministic.
 
 Phase 3 thêm menu chuột phải tối thiểu: `Read clipboard`, `Pause/Resume`, `Skip`, `Stop`. Clipboard được chunk và route VI/EN qua cùng reader path; nếu voice chưa chạy thì `Read clipboard` tự start đúng sidecar hiện có. Pause/resume/skip/stop điều khiển cùng một `sounddevice.OutputStream` speaker, không tạo audio path hoặc sidecar thứ hai. Chuột phải vẫn chạy `right_click` và `-right-cmd` trước khi mở menu. Nếu voice lỗi, visual runtime vẫn chạy và ghi lỗi vào `go-lite/pet-lite.log`.
+
+### Phase 5 local chat
+
+ThinkBook benchmark dùng cùng `llama.cpp` CPU build `b10223` (`11924d4c17abc27383376a1ac6a24fa3e36c1c0c`), `ctx=2048`, 8 threads, 1 slot, reasoning off. Hai model đều trả lời Việt/Anh dùng được; Gemma được chọn vì độ trễ hội thoại và tốc độ sinh tốt hơn rõ rệt, đổi lại khoảng 0.29 GiB RAM và 0.24 giây load.
+
+| Model | RAM sau load | Load | First token VI / EN | Sinh token | VI/EN |
+|---|---:|---:|---:|---:|---|
+| `gemma-3-4b-it-Q4_K_M` (`d0976223747697cb51e056d85c532013931fe52e`) | 4.015 GiB | 4.86 s | 5.09 s / 3.35 s | ~10.92 tok/s | tự nhiên, ngắn, dùng được cả hai |
+| `Qwen3.5-4B-UD-Q4_K_XL` (`e87f176479d0855a907a41277aca2f8ee7a09523`) | 3.728 GiB | 4.62 s | 11.71 s / 2.02 s | ~4.66 tok/s | tự nhiên, dùng được cả hai |
+
+Cài runtime/model đã pin (opt-in, vì model vài GiB):
+
+```powershell
+.\scripts\setup-voice.ps1 -LocalChat
+```
+
+Runtime ZIP `llama-b10223-bin-win-cpu-x64.zip` có SHA-256 `74c1ded0512818d98b51940bf9150e16da8ed79cf0cbe8d85788e01cdd00ff67`. Model mặc định `gemma-3-4b-it-Q4_K_M.gguf` có SHA-256 `882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863`.
+
+Start đúng một localhost server trước khi bật hội thoại:
+
+```powershell
+.\.voice\chat\llama-b10223\llama-server.exe -m .\.voice\chat\gemma-3-4b-it-Q4_K_M.gguf --host 127.0.0.1 --port 8080 --alias desktop-pet --ctx-size 2048 --threads 8 --threads-batch 8 --parallel 1 --reasoning off
+```
+
+Phase 5 chỉ gửi câu đã qua wake/session và không khớp command hoặc fixed intent sang `127.0.0.1`. Reply plain text được route `vi|en` rồi phát qua TTS hiện có. Nếu `llama-server` chưa chạy, bị từ chối hoặc timeout, pet vẫn chạy, command/fixed reply vẫn hoạt động và câu hội thoại unknown dùng fixed fallback hiện có.
 
 Kích cỡ pet được đọc từ `pet.json`, không cần truyền lệnh mỗi lần.
 

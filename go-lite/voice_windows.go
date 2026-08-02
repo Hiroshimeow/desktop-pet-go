@@ -31,6 +31,8 @@ type voiceEvent struct {
 	STTDoneNS    int64  `json:"stt_done_ns"`
 	TTSDoneNS    int64  `json:"tts_done_ns"`
 	FirstAudioNS int64  `json:"first_audio_ns"`
+	UserText     string `json:"-"`
+	FallbackText string `json:"-"`
 }
 
 type voiceCommand struct {
@@ -46,19 +48,23 @@ type voiceSpeakRequest struct {
 }
 
 type VoiceController struct {
-	events     chan<- voiceEvent
-	session    *voice.Session
-	listen     bool
-	queue      []voiceSpeakRequest
-	activeTurn string
-	nextTurn   int
-	ready      bool
-	paused     bool
-	cancel     context.CancelFunc
-	stdin      io.WriteCloser
-	done       chan struct{}
-	mu         sync.Mutex
+	events      chan<- voiceEvent
+	session     *voice.Session
+	chat        *voice.ChatClient
+	chatHistory []voice.ChatMessage
+	listen      bool
+	queue       []voiceSpeakRequest
+	activeTurn  string
+	nextTurn    int
+	ready       bool
+	paused      bool
+	cancel      context.CancelFunc
+	stdin       io.WriteCloser
+	done        chan struct{}
+	mu          sync.Mutex
 }
+
+const voiceChatPersona = "You are a small desktop pet. Reply naturally in the user's language, Vietnamese or English. Keep replies short, conversational, easy to speak aloud, and plain text only."
 
 func (a *App) startVoiceAsync(listen bool, sayText, readFile, readLang string) {
 	requests, err := buildStartupVoiceRequests(sayText, readFile, readLang)
@@ -79,6 +85,7 @@ func (a *App) startVoiceController(listen bool, requests []voiceSpeakRequest) {
 	controller := &VoiceController{
 		events:  a.VoiceEvents,
 		session: voice.NewSession(5 * time.Second),
+		chat:    voice.NewLocalChatClient(),
 		listen:  listen,
 		queue:   append([]voiceSpeakRequest(nil), requests...),
 		done:    make(chan struct{}),
@@ -376,14 +383,55 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 		}
 		if reply.Intent == voice.IntentUnknown {
 			a.triggerVoiceIntent(petbrain.IntentVoiceUnknown)
+			history := append([]voice.ChatMessage(nil), a.Voice.chatHistory...)
+			go a.Voice.requestChat(event.TurnID, event.Text, reply.Text, history)
+			return
 		}
 		a.Voice.speak(event.TurnID, reply.Text, "vi")
+	case "chat_reply":
+		a.handleChatReply(event)
+	case "chat_error":
+		log.Printf("local chat failed: %s", event.Detail)
+		if !a.Voice.speak(event.TurnID, event.FallbackText, "vi") {
+			a.Voice.resume(event.TurnID)
+		}
 	case "speak_done":
 		a.Voice.completeSpeak(event.TurnID)
 	case "first_audio":
 		log.Printf("voice first audio turn=%s first_audio_ns=%d", event.TurnID, event.FirstAudioNS)
 	case "turn_metrics":
 		log.Printf("voice metrics turn=%s latency_ms=%.1f eos_ns=%d stt_done_ns=%d tts_done_ns=%d first_audio_ns=%d", event.TurnID, voiceLatencyMS(event), event.EOSNS, event.STTDoneNS, event.TTSDoneNS, event.FirstAudioNS)
+	}
+}
+
+func (v *VoiceController) requestChat(turnID, userText, fallbackText string, history []voice.ChatMessage) {
+	reply, err := v.chat.Reply(context.Background(), voiceChatPersona, history, userText)
+	event := voiceEvent{Type: "chat_reply", TurnID: turnID, Text: reply, UserText: userText, FallbackText: fallbackText}
+	if err != nil {
+		event.Type = "chat_error"
+		event.Detail = err.Error()
+	}
+	v.events <- event
+}
+
+func (a *App) handleChatReply(event voiceEvent) {
+	lang, err := voice.ResolveLanguage(event.Text, "auto")
+	if err != nil {
+		log.Printf("local chat reply language failed: %v", err)
+		if !a.Voice.speak(event.TurnID, event.FallbackText, "vi") {
+			a.Voice.resume(event.TurnID)
+		}
+		return
+	}
+	a.Voice.chatHistory = append(a.Voice.chatHistory,
+		voice.ChatMessage{Role: "user", Content: event.UserText},
+		voice.ChatMessage{Role: "assistant", Content: event.Text},
+	)
+	if len(a.Voice.chatHistory) > 6 {
+		a.Voice.chatHistory = a.Voice.chatHistory[len(a.Voice.chatHistory)-6:]
+	}
+	if !a.Voice.speak(event.TurnID, event.Text, lang) {
+		a.Voice.resume(event.TurnID)
 	}
 }
 
