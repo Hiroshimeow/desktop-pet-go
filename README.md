@@ -41,6 +41,15 @@ Khi chạy, nói `pet ơi, em là ai` trong một câu; hoặc nói `pet ơi`, r
 
 Nếu `uv`, model, microphone hoặc speaker lỗi, pet hình ảnh vẫn tiếp tục chạy; xem `go-lite\pet-lite.log` để lấy lỗi có hành động khắc phục. Latency từng lượt được ghi tại `.voice\logs\turns.jsonl` và trong `pet-lite.log`.
 
+### Voice Phase 7 — local persona + recent memory
+
+Khi chạy `-voice`, pet dùng hai file local nhỏ dưới `.voice/`:
+
+- `.voice/persona.txt`: system persona có thể sửa trực tiếp; file mặc định được tạo ở lần khởi động voice/chat đầu tiên nếu chưa có.
+- `.voice/history.json`: chỉ giữ 3 lượt user/assistant thành công gần nhất (6 chat messages) và nạp lại sau restart.
+
+Muốn đổi personality, dừng pet, sửa `persona.txt`, rồi chạy lại. Muốn xóa recent conversation, dừng pet và xóa riêng `.voice/history.json`; lần chạy sau bắt đầu với history rỗng. Hai file này chỉ ở local và đã được ignore; Phase 7 không có database, RAG, embeddings hay long-term fact extraction.
+
 Acceptance tự động có thể thay microphone bằng chuỗi WAV test mà vẫn đi qua VAD/STT thật. Đặt các WAV 16 kHz, 16-bit mono PCM và manifest dưới `.voice/`, ví dụ:
 
 ```json

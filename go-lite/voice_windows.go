@@ -48,23 +48,21 @@ type voiceSpeakRequest struct {
 }
 
 type VoiceController struct {
-	events      chan<- voiceEvent
-	session     *voice.Session
-	chat        *voice.ChatClient
-	chatHistory []voice.ChatMessage
-	listen      bool
-	queue       []voiceSpeakRequest
-	activeTurn  string
-	nextTurn    int
-	ready       bool
-	paused      bool
-	cancel      context.CancelFunc
-	stdin       io.WriteCloser
-	done        chan struct{}
-	mu          sync.Mutex
+	events     chan<- voiceEvent
+	session    *voice.Session
+	chat       *voice.ChatClient
+	memory     *voice.Memory
+	listen     bool
+	queue      []voiceSpeakRequest
+	activeTurn string
+	nextTurn   int
+	ready      bool
+	paused     bool
+	cancel     context.CancelFunc
+	stdin      io.WriteCloser
+	done       chan struct{}
+	mu         sync.Mutex
 }
-
-const voiceChatPersona = "You are a small desktop pet. Reply naturally in the user's language, Vietnamese or English. Keep replies short, conversational, easy to speak aloud, and plain text only."
 
 func (a *App) startVoiceAsync(listen bool, sayText, readFile, readLang string) {
 	requests, err := buildStartupVoiceRequests(sayText, readFile, readLang)
@@ -114,6 +112,12 @@ func (v *VoiceController) run() error {
 	sidecarDir, err := locateVoiceSidecar()
 	if err != nil {
 		return err
+	}
+	if v.listen {
+		v.memory, err = voice.LoadMemory(filepath.Join(filepath.Dir(sidecarDir), ".voice"))
+		if err != nil {
+			log.Printf("voice memory degraded: %v", err)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	v.cancel = cancel
@@ -383,8 +387,11 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 			return
 		}
 		a.triggerVoiceIntent(petbrain.IntentVoiceUnknown)
-		history := append([]voice.ChatMessage(nil), a.Voice.chatHistory...)
-		go a.Voice.requestChat(event.TurnID, event.Text, reply.Text, history)
+		persona, history := voice.DefaultPersona, []voice.ChatMessage(nil)
+		if a.Voice.memory != nil {
+			persona, history = a.Voice.memory.Snapshot()
+		}
+		go a.Voice.requestChat(event.TurnID, event.Text, reply.Text, persona, history)
 		return
 	case "chat_reply":
 		a.handleChatReply(event)
@@ -402,8 +409,8 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 	}
 }
 
-func (v *VoiceController) requestChat(turnID, userText, fallbackText string, history []voice.ChatMessage) {
-	reply, err := v.chat.Reply(context.Background(), voiceChatPersona, history, userText)
+func (v *VoiceController) requestChat(turnID, userText, fallbackText, persona string, history []voice.ChatMessage) {
+	reply, err := v.chat.Reply(context.Background(), persona, history, userText)
 	event := voiceEvent{Type: "chat_reply", TurnID: turnID, Text: reply, UserText: userText, FallbackText: fallbackText}
 	if err != nil {
 		event.Type = "chat_error"
@@ -421,12 +428,10 @@ func (a *App) handleChatReply(event voiceEvent) {
 		}
 		return
 	}
-	a.Voice.chatHistory = append(a.Voice.chatHistory,
-		voice.ChatMessage{Role: "user", Content: event.UserText},
-		voice.ChatMessage{Role: "assistant", Content: event.Text},
-	)
-	if len(a.Voice.chatHistory) > 6 {
-		a.Voice.chatHistory = a.Voice.chatHistory[len(a.Voice.chatHistory)-6:]
+	if a.Voice.memory != nil {
+		if err := a.Voice.memory.Append(event.UserText, event.Text); err != nil {
+			log.Printf("voice memory persistence degraded: %v", err)
+		}
 	}
 	if !a.Voice.speak(event.TurnID, event.Text, lang) {
 		a.Voice.resume(event.TurnID)
