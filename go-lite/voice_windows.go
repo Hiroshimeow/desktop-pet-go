@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -369,6 +370,10 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 			a.Voice.resume(event.TurnID)
 			return
 		}
+		if command, matched := voice.ParseCommand(event.Text); matched {
+			a.dispatchVoiceCommand(event, command)
+			return
+		}
 		if reply.Intent == voice.IntentUnknown {
 			a.triggerVoiceIntent(petbrain.IntentVoiceUnknown)
 		}
@@ -379,6 +384,35 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 		log.Printf("voice first audio turn=%s first_audio_ns=%d", event.TurnID, event.FirstAudioNS)
 	case "turn_metrics":
 		log.Printf("voice metrics turn=%s latency_ms=%.1f eos_ns=%d stt_done_ns=%d tts_done_ns=%d first_audio_ns=%d", event.TurnID, voiceLatencyMS(event), event.EOSNS, event.STTDoneNS, event.TTSDoneNS, event.FirstAudioNS)
+	}
+}
+
+func (a *App) dispatchVoiceCommand(event voiceEvent, command voice.VoiceCommand) {
+	switch command {
+	case voice.CommandPause:
+		a.Voice.pausePlayback()
+		a.Voice.resume(event.TurnID)
+	case voice.CommandResume:
+		a.Voice.resumePlayback()
+		a.Voice.resume(event.TurnID)
+	case voice.CommandSkip:
+		a.Voice.skipCurrent()
+		a.Voice.resume(event.TurnID)
+	case voice.CommandStop:
+		a.Voice.stopPlayback()
+		a.Voice.resume(event.TurnID)
+	case voice.CommandReadClipboard:
+		a.Voice.resume(event.TurnID)
+		a.readClipboardVoice(0)
+	case voice.CommandStatus:
+		text, lang := "Mình đang sẵn sàng.", "vi"
+		normalized := voice.Normalize(event.Text)
+		if normalized == "status" || strings.HasSuffix(normalized, " status") {
+			text, lang = "I'm ready.", "en"
+		}
+		if !a.Voice.speak(event.TurnID, text, lang) {
+			a.Voice.resume(event.TurnID)
+		}
 	}
 }
 
