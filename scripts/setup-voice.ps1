@@ -211,9 +211,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 $sourceAgent = $aliases | Where-Object { $_ -ne 'pet' } | Select-Object -First 1
 if ($aliases -notcontains 'pet') {
-    if (-not $sourceAgent) {
-        throw 'ZeroClaw has no configured source agent whose model/runtime profiles can be reused for pet'
-    }
     Invoke-NativeChecked $zeroClaw @('agents', 'create', 'pet')
 }
 
@@ -233,18 +230,28 @@ if ($currentPetProvider -ne $petProvider) {
     Invoke-NativeChecked $zeroClaw @('config', 'set', 'agents.pet.model_provider', $petProvider, '--no-interactive')
 }
 
-foreach ($name in @('risk_profile', 'runtime_profile')) {
-    $petValue = Get-ZeroClawConfigValue "agents.pet.$name"
-    if (-not $petValue) {
-        if (-not $sourceAgent) {
-            throw "agents.pet.$name is empty and no configured source agent exists"
-        }
-        $sourceValue = Get-ZeroClawConfigValue "agents.$sourceAgent.$name"
-        if (-not $sourceValue) {
-            throw "agents.$sourceAgent.$name is empty; cannot configure agents.pet.$name"
-        }
-        Invoke-NativeChecked $zeroClaw @('config', 'set', "agents.pet.$name", $sourceValue, '--no-interactive')
+foreach ($profile in @(
+    @{ Name = 'risk_profile'; Section = 'risk_profiles' },
+    @{ Name = 'runtime_profile'; Section = 'runtime_profiles' }
+)) {
+    $petValue = Try-GetZeroClawConfigValue "agents.pet.$($profile.Name)"
+    if ($petValue) {
+        continue
     }
+
+    $sourceValue = if ($sourceAgent) {
+        Try-GetZeroClawConfigValue "agents.$sourceAgent.$($profile.Name)"
+    }
+    else {
+        ''
+    }
+    if ($sourceValue) {
+        Invoke-NativeChecked $zeroClaw @('config', 'set', "agents.pet.$($profile.Name)", $sourceValue, '--no-interactive')
+        continue
+    }
+
+    Invoke-NativeChecked $zeroClaw @('config', 'init', "$($profile.Section).pet")
+    Invoke-NativeChecked $zeroClaw @('config', 'set', "agents.pet.$($profile.Name)", 'pet', '--no-interactive')
 }
 $petRuntimeProfile = Get-ZeroClawConfigValue 'agents.pet.runtime_profile'
 $petAgentic = Try-GetZeroClawConfigValue "runtime_profiles.$petRuntimeProfile.agentic"
@@ -259,6 +266,10 @@ if ($LASTEXITCODE -ne 0) {
 Invoke-NativeChecked $zeroClaw @('config', 'set', 'gateway.host', '127.0.0.1', '--no-interactive')
 Invoke-NativeChecked $zeroClaw @('config', 'set', 'gateway.port', '42617', '--no-interactive')
 Invoke-NativeChecked $zeroClaw @('config', 'set', 'gateway.require_pairing', 'true', '--no-interactive')
+
+Invoke-ZeroClawServiceChecked @('service', 'stop') -AllowFailure | Out-Null
+Start-Sleep -Milliseconds 300
+Stop-StaleZeroClawGateway
 
 if (-not (Test-Path -PathType Leaf $petToken) -or -not ([System.IO.File]::ReadAllText($petToken).Trim())) {
     New-Item -ItemType Directory -Force -Path $zeroClawRoot | Out-Null
@@ -287,7 +298,7 @@ if (-not (Test-Path -PathType Leaf $petToken) -or -not ([System.IO.File]::ReadAl
         if (-not $pairCode) {
             throw 'ZeroClaw pairing code was not emitted within 15 seconds'
         }
-        $pairResponse = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:42617/pair' -Headers @{ 'X-Pairing-Code' = $pairCode }
+        $pairResponse = Invoke-RestMethod -NoProxy -Method Post -Uri 'http://127.0.0.1:42617/pair' -Headers @{ 'X-Pairing-Code' = $pairCode }
         if (-not $pairResponse.paired -or -not $pairResponse.persisted -or -not $pairResponse.token) {
             throw 'ZeroClaw localhost pairing did not return a persisted bearer token'
         }
@@ -302,9 +313,6 @@ if (-not (Test-Path -PathType Leaf $petToken) -or -not ([System.IO.File]::ReadAl
     }
 }
 
-Invoke-ZeroClawServiceChecked @('service', 'stop') -AllowFailure | Out-Null
-Start-Sleep -Milliseconds 300
-Stop-StaleZeroClawGateway
 Invoke-ZeroClawServiceChecked @('service', 'install') | Out-Null
 Invoke-ZeroClawServiceChecked @('service', 'start') | Out-Null
 $healthy = $false
@@ -312,7 +320,7 @@ $deadline = [DateTime]::UtcNow.AddSeconds(15)
 while ([DateTime]::UtcNow -lt $deadline -and -not $healthy) {
     Start-Sleep -Milliseconds 200
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:42617/health' -TimeoutSec 2
+        $response = Invoke-WebRequest -NoProxy -UseBasicParsing -Uri 'http://127.0.0.1:42617/health' -TimeoutSec 2
         $healthy = $response.StatusCode -eq 200
     }
     catch {
