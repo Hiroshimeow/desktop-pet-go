@@ -138,6 +138,8 @@ type WindowPet struct {
 	Scale       float64
 	FrameW      int
 	FrameH      int
+	LastRender  visibleRenderState
+	HasRender   bool
 }
 
 type InputEventKind int
@@ -195,15 +197,19 @@ func main() {
 	clickCommand := flag.String("click-cmd", "", "optional trusted local command run on left click")
 	rightCommand := flag.String("right-cmd", "", "optional trusted local command run on right click")
 	hookTimeoutMS := flag.Int("hook-timeout-ms", 15000, "timeout for optional click/right trusted local hook commands; <=0 disables timeout")
-	voiceEnabled := flag.Bool("voice", false, "enable local Vietnamese wake/STT/fixed-reply/TTS loop")
+	voiceEnabled := flag.Bool("voice", false, "enable Vietnamese/Japanese wake/STT conversation through ZeroClaw")
+	commandMode := flag.Bool("command", false, "enable click-to-listen deterministic local command mode")
 	sayText := flag.String("say", "", "speak text once in Vietnamese or English")
 	readFile := flag.String("read-file", "", "read a local UTF-8 .txt or .md file")
 	readLang := flag.String("read-lang", "auto", "speech language: auto, vi, or en")
 	flag.Parse()
 
 	initLog()
-	voiceRequested := *voiceEnabled || *sayText != "" || *readFile != ""
-	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v voice=%v say=%v read_file=%q read_lang=%q click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *voiceEnabled, *sayText != "", *readFile, *readLang, *clickCommand != "", *rightCommand != "")
+	if *voiceEnabled && *commandMode {
+		fatalExit(1, "-voice and -command are mutually exclusive")
+	}
+	voiceRequested := *voiceEnabled || *commandMode || *sayText != "" || *readFile != ""
+	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v voice=%v command=%v say=%v read_file=%q read_lang=%q click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *voiceEnabled, *commandMode, *sayText != "", *readFile, *readLang, *clickCommand != "", *rightCommand != "")
 	profile, profileBase, err := loadRuntimeProfile(*profilePath, *assetsPath, *petSelect)
 	if err != nil {
 		fatalExit(1, "load runtime profile failed: %v", err)
@@ -225,7 +231,7 @@ func main() {
 	}
 	defer app.stopVoice()
 	if voiceRequested {
-		app.startVoiceAsync(*voiceEnabled, *sayText, *readFile, *readLang)
+		app.startVoiceAsync(*voiceEnabled, *commandMode, *sayText, *readFile, *readLang)
 	}
 	messageLoop()
 }
@@ -239,7 +245,11 @@ func (a *App) printCatalogOnly(profileBase string, assetsPath string) error {
 		if err != nil {
 			return err
 		}
-		printCatalog(manifest)
+		store, err := LoadSpriteStore(manifest)
+		if err != nil {
+			return err
+		}
+		printCatalog(store.Manifest)
 	}
 	return nil
 }
@@ -337,7 +347,7 @@ func initLog() {
 	}
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
-		log.SetOutput(io.MultiWriter(os.Stderr, f))
+		log.SetOutput(io.MultiWriter(f, os.Stderr))
 		log.Printf("log opened path=%s", logPath)
 		return
 	}
@@ -509,6 +519,9 @@ func (a *App) handleInputEvent(ev InputEvent) {
 		} else if p.PendingLeft {
 			a.endPendingLeft(p, "left_up_click")
 			p.Pet.TriggerAction("left_click")
+			if a.Voice != nil {
+				a.Voice.armListenOnce()
+			}
 			a.runHook(a.ClickCommand)
 		}
 	case InputLeftDouble:
@@ -635,44 +648,56 @@ func (a *App) drawPet(wp *WindowPet) {
 			log.Printf("draw panic pet=%s anim=%s frame=%d err=%v", wp.Pet.InstanceID, wp.Pet.Animation, wp.Pet.Frame, r)
 		}
 	}()
-	strip, srcX, srcY, fw, fh, err := wp.Pet.Store.FrameRect(wp.Pet.Animation, wp.Pet.Frame)
-	if err != nil {
-		log.Printf("frame lookup failed pet=%s anim=%s frame=%d err=%v", wp.Pet.InstanceID, wp.Pet.Animation, wp.Pet.Frame, err)
+
+	def, ok := wp.Pet.Manifest.Animations[wp.Pet.Animation]
+	if !ok {
+		log.Printf("frame lookup failed pet=%s anim=%s frame=%d err=animation missing from manifest", wp.Pet.InstanceID, wp.Pet.Animation, wp.Pet.Frame)
 		wp.Pet.Animation = wp.Pet.Manifest.DefaultAnimation
 		wp.Pet.Frame = 0
 		return
 	}
-	stride := wp.FrameW * 4
-	buf := unsafe.Slice((*byte)(unsafe.Pointer(wp.Bits)), wp.FrameH*stride)
-	for y := 0; y < wp.FrameH; y++ {
-		for x := 0; x < wp.FrameW; x++ {
-			sx := srcX + int(float64(x)/wp.Scale)
-			sy := srcY + int(float64(y)/wp.Scale)
-			if sx >= srcX+fw {
-				sx = srcX + fw - 1
-			}
-			if sy >= srcY+fh {
-				sy = srcY + fh - 1
-			}
-			if shouldFlip(wp.Pet.Manifest.Animations[wp.Pet.Animation].NativeFacing, wp.Pet.Facing) {
-				sx = srcX + fw - 1 - (sx - srcX)
-			}
-			si := strip.Image.PixOffset(sx, sy)
-			di := y*stride + x*4
-			r := strip.Image.Pix[si]
-			g := strip.Image.Pix[si+1]
-			b := strip.Image.Pix[si+2]
-			al := strip.Image.Pix[si+3]
-			buf[di], buf[di+1], buf[di+2], buf[di+3] = b, g, r, al
-		}
+	current := visibleRenderState{
+		Animation: wp.Pet.Animation,
+		Frame:     wp.Pet.Frame,
+		X:         int32(wp.Pet.X),
+		Y:         int32(wp.Pet.Y),
+		Flip:      shouldFlip(def.NativeFacing, wp.Pet.Facing),
+		Width:     wp.FrameW,
+		Height:    wp.FrameH,
 	}
+	var previous *visibleRenderState
+	if wp.HasRender {
+		previous = &wp.LastRender
+	}
+	copyPixels, updateWindow := decideRender(previous, current)
+	if !updateWindow {
+		return
+	}
+	if copyPixels {
+		frame, err := wp.Pet.Store.RenderFrame(current.Animation, current.Frame, current.Width, current.Height, current.Flip)
+		if err != nil {
+			log.Printf("frame lookup failed pet=%s anim=%s frame=%d err=%v", wp.Pet.InstanceID, wp.Pet.Animation, wp.Pet.Frame, err)
+			wp.Pet.Animation = wp.Pet.Manifest.DefaultAnimation
+			wp.Pet.Frame = 0
+			return
+		}
+		buf := unsafe.Slice((*byte)(unsafe.Pointer(wp.Bits)), wp.FrameW*wp.FrameH*4)
+		copy(buf, frame.BGRA)
+	}
+
 	screen, _, _ := pGetDC.Call(0)
-	ptDst := point{int32(wp.Pet.X), int32(wp.Pet.Y)}
-	sz := size{int32(wp.FrameW), int32(wp.FrameH)}
+	ptDst := point{current.X, current.Y}
+	sz := size{int32(current.Width), int32(current.Height)}
 	ptSrc := point{0, 0}
 	blend := blendFunction{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA}
-	pUpdateLayeredWindow.Call(wp.HWND, screen, uintptr(unsafe.Pointer(&ptDst)), uintptr(unsafe.Pointer(&sz)), wp.DC, uintptr(unsafe.Pointer(&ptSrc)), 0, uintptr(unsafe.Pointer(&blend)), ULW_ALPHA)
+	updated, _, updateErr := pUpdateLayeredWindow.Call(wp.HWND, screen, uintptr(unsafe.Pointer(&ptDst)), uintptr(unsafe.Pointer(&sz)), wp.DC, uintptr(unsafe.Pointer(&ptSrc)), 0, uintptr(unsafe.Pointer(&blend)), ULW_ALPHA)
 	pReleaseDC.Call(0, screen)
+	if updated == 0 {
+		log.Printf("UpdateLayeredWindow failed pet=%s err=%v", wp.Pet.InstanceID, updateErr)
+		return
+	}
+	wp.LastRender = current
+	wp.HasRender = true
 }
 
 func wndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {

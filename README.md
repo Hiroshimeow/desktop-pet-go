@@ -14,57 +14,71 @@ Tài liệu chi tiết nằm trong `docs/`:
 - `scripts/sprite_row_cutter_gui.py`: GUI cắt từng hàng animation 1x5 đến 1x10 thủ công.
 
 
-Desktop Pet Lite là runtime pet Windows viết bằng Go/Win32. Voice/reader là tùy chọn qua `-voice`, `-say` hoặc `-read-file`; pet tự quản lý một sidecar Python 3.11 đã khóa dependency để chạy VAD/STT/TTS local, không cần service thủ công.
+Desktop Pet Lite là runtime pet Windows viết bằng Go/Win32. Voice/reader là tùy chọn; STT/TTS chạy local CPU, còn hội thoại `-voice` dùng ZeroClaw v0.8.3 Daemon + localhost Gateway làm brain.
 
-## Voice Phase 1–2 — Vietnamese wake + VI/EN speech/reader
+## Voice / reader — supported VI/JA conversation
 
-Từ thư mục gốc trên Windows 11:
+Từ thư mục gốc trên Windows 11, full voice/conversation chỉ cần một lệnh setup và một lệnh chạy PET:
 
 ```powershell
 .\scripts\setup-voice.ps1
 .\go-lite\pet-lite.exe -assets .\assets -pet pet5 -voice
 ```
 
-Bootstrap dùng `uv.lock`, tải đúng `faster-whisper-base` CPU/int8 cùng Piper `vi_VN-vais1000-medium` và `en_US-lessac-medium` vào `.voice/`, kiểm tra SHA-256, kiểm tra thiết bị audio và build `go-lite\pet-lite.exe`. Model/cache/audio sinh ra không được commit.
+Setup dùng `uv.lock` cho voice-sidecar, kiểm tra/tải faster-whisper base CPU/int8, Piper `vi_VN-vais1000-medium` + `en_US-lessac-medium`, cài Kokoro 0.9.4 + `misaki[ja]`/UniDic cho Japanese TTS và prewarm voice `jf_alpha`. Setup cũng tải đúng ZeroClaw Windows v0.8.3 prebuilt theo SHA-256, migrate config ZeroClaw hiện có, tạo agent `pet`, khóa Gateway ở `127.0.0.1:42617`, pair một bearer token riêng dưới `.voice/zeroclaw/`, rồi cài/start `ZeroClaw Daemon` bằng service lifecycle chính thức. Không tải hoặc start llama.cpp/Gemma trong flow Phase 10.
 
-Phase 2 thêm direct speech và local reader:
+ZeroClaw chạy độc lập với PET. Đóng/restart `pet-lite.exe` hoặc voice-sidecar không dừng daemon; PET reconnect Gateway ở lần chạy tiếp theo. Provider/model/credentials vẫn do config ZeroClaw của user sở hữu, không được copy vào repo hoặc PET.
+
+Luồng `-voice`:
+
+```text
+microphone -> VAD -> faster-whisper auto language
+           -> wake/session
+           -> deterministic command matcher
+              -> matched: execute local, không gọi ZeroClaw
+              -> unmatched: ZeroClaw /ws/chat agent=pet session_id=desktop-pet-voice
+                            -> local TTS -> speaker
+```
+
+Wake Vietnamese hiện có vẫn giữ nguyên. Japanese hỗ trợ `ペット` và `ねえ ペット`; near-match như `ペットボトル` không wake. Faster-whisper tự detect Vietnamese/Japanese thay vì bị ép `vi`. Reply tiếng Việt dùng Piper; reply Japanese dùng Kokoro-82M `jf_alpha`.
+
+`-command` vẫn là Phase 9 deterministic-only: click -> nghe đúng một utterance -> command matcher -> local action. Mode này không tạo ZeroClaw turn và không phụ thuộc daemon/model provider.
+
+Các command local hỗ trợ:
+
+| Vietnamese | English | Action |
+|---|---|---|
+| `tạm dừng` | `pause` | Pause playback |
+| `tiếp tục` | `resume` | Resume playback |
+| `bỏ qua` / `đoạn tiếp` | `skip` / `next` | Skip current reader chunk |
+| `dừng đọc` / `dừng lại` | `stop reading` / `stop` | Stop current speech/read |
+| `đọc clipboard` | `read clipboard` | Read Windows clipboard |
+| `trạng thái` | `status` | Speak local status |
+
+Direct speech và local TXT/MD reader cũ vẫn dùng VI/EN path:
 
 ```powershell
 .\go-lite\pet-lite.exe -assets .\assets -pet pet5 -say "Xin chào"
 .\go-lite\pet-lite.exe -assets .\assets -pet pet5 -say "Hello there"
+.\go-lite\pet-lite.exe -assets .\assets -pet pet5 -read-file .\note.txt -read-lang auto
 .\go-lite\pet-lite.exe -assets .\assets -pet pet5 -read-file .\note.md -read-lang auto
 ```
 
-`-read-lang` nhận `auto|vi|en`; `auto` chọn `vi` khi có dấu tiếng Việt, chọn `en` cho Latin text còn lại và từ chối script ngoài VI/EN. Reader chỉ nhận UTF-8 `.txt`/`.md`, chia đoạn deterministic theo paragraph -> sentence punctuation -> hard cap 350 ký tự rồi phát tuần tự. `-say`/`-read-file` không mở microphone trừ khi truyền thêm `-voice`.
+`-read-lang` nhận `auto|vi|en`; `auto` chọn `vi` khi có dấu tiếng Việt và `en` cho Latin text còn lại. Reader chỉ hỗ trợ UTF-8 `.txt`/`.md`, chunk deterministic theo paragraph -> sentence punctuation -> hard cap 350 ký tự. `-say`/`-read-file` không mở microphone nếu không có thêm `-voice`.
 
-Khi chạy, nói `pet ơi, em là ai` trong một câu; hoặc nói `pet ơi`, rồi hỏi trong 5 giây. Các biến thể wake `pét/bét/bết ơi` và `mèo ơi` được chấp nhận để chịu lỗi STT tiếng Việt. Intent cố định gồm chào hỏi, danh tính, trạng thái, tạm biệt và unknown. Microphone bị bỏ qua trong lúc TTS phát và thêm cooldown ngắn để pet không nghe chính nó.
+Right-click menu giữ đúng bốn control voice: `Read clipboard`, `Pause/Resume`, `Skip`, `Stop`. Clipboard dùng Windows clipboard thật và cùng reader/language path; click, drag, movement và render không chờ STT/TTS/Gateway inference.
 
-Nếu `uv`, model, microphone hoặc speaker lỗi, pet hình ảnh vẫn tiếp tục chạy; xem `go-lite\pet-lite.log` để lấy lỗi có hành động khắc phục. Latency từng lượt được ghi tại `.voice\logs\turns.jsonl` và trong `pet-lite.log`.
+PET không còn sở hữu conversation memory/persona trong Phase 10. `.voice/persona.txt` và `.voice/history.json` từ Phase 7 có thể còn trên máy nhưng normal `-voice` không đọc/ghi chúng; conversation state, tools và model routing thuộc ZeroClaw.
 
-### Voice Phase 7 — local persona + recent memory
+Phase 11 dùng chính agent `pet` và session `desktop-pet-voice` cho natural VI/JA planning, lưu/nhớ lại note ngắn qua ZeroClaw memory, và one-shot reminder qua ZeroClaw cron. `setup-voice.ps1` chỉ bật agentic runtime cho riêng `pet` khi profile hiện tại chưa bật; PET không có planner, note DB, scheduler hay MCP riêng. Khi normal `-voice` chạy, PET mở thêm một `/ws/chat` watcher bằng handshake `connect` (không tạo user/model turn) để nhận `cron_result`; reminder thành công đi vào đúng local speech queue/TTS hiện có. Restart riêng PET không dừng daemon nên reminder ZeroClaw đã lưu vẫn tồn tại và được nói nếu PET reconnect trước lúc job fire.
 
-Khi chạy `-voice`, pet dùng hai file local nhỏ dưới `.voice/`:
+ZeroClaw `thinking` và `plan`/`tool_call`/`tool_result` được map vào semantic thinking/working reaction hiện có; final response vẫn đi qua local VI/JA TTS. Phase 9 deterministic command vẫn được match và execute trước ZeroClaw, nên không tạo agent turn.
 
-- `.voice/persona.txt`: system persona có thể sửa trực tiếp; file mặc định được tạo ở lần khởi động voice/chat đầu tiên nếu chưa có.
-- `.voice/history.json`: chỉ giữ 3 lượt user/assistant thành công gần nhất (6 chat messages) và nạp lại sau restart.
+Fail-soft là supported behavior: ZeroClaw/Gateway/provider unavailable không được làm visual pet hoặc Phase 9 `-command` chết; turn hội thoại lỗi được log và voice session quay lại listening. Reminder thất bại hoặc watcher lỗi chỉ log + semantic error, không biến output lỗi thành speech. Nếu STT/TTS, microphone hoặc speaker lỗi, visual pet vẫn tiếp tục chạy và lỗi local được ghi ở `go-lite\pet-lite.log`.
 
-Muốn đổi personality, dừng pet, sửa `persona.txt`, rồi chạy lại. Muốn xóa recent conversation, dừng pet và xóa riêng `.voice/history.json`; lần chạy sau bắt đầu với history rỗng. Hai file này chỉ ở local và đã được ignore; Phase 7 không có database, RAG, embeddings hay long-term fact extraction.
+Acceptance tự động có thể đặt `DESKTOP_PET_VOICE_TEST_WAV_SEQUENCE` tới manifest WAV 16 kHz / 16-bit mono để vẫn chạy qua VAD/STT/session/router thật. Không đặt biến này khi dùng microphone thật.
 
-Acceptance tự động có thể thay microphone bằng chuỗi WAV test mà vẫn đi qua VAD/STT thật. Đặt các WAV 16 kHz, 16-bit mono PCM và manifest dưới `.voice/`, ví dụ:
-
-```json
-{"items":[{"wav":"wake-question.wav","delay_ms":500},{"wav":"wake-only.wav"},{"wav":"follow-up.wav","delay_ms":500}]}
-```
-
-Path WAV là tương đối với manifest. Chạy trên PowerShell:
-
-```powershell
-$env:DESKTOP_PET_VOICE_TEST_WAV_SEQUENCE = (Resolve-Path .\.voice\acceptance\sequence.json)
-.\go-lite\pet-lite-debug.exe -assets .\assets -pet pet5 -voice
-Remove-Item Env:DESKTOP_PET_VOICE_TEST_WAV_SEQUENCE
-```
-
-Không đặt biến môi trường này khi dùng microphone thật; path production vẫn mở `RawInputStream` mặc định.
+Các note phase/benchmark cũ trong repo là historical evidence; phần này cùng phần animation bên dưới là runbook supported đến Phase 12 hiện tại.
 
 ## Chạy nhanh
 
@@ -174,7 +188,27 @@ assets/
         angry.png
 ```
 
-Mỗi file trong `animations/<act>.png` là một strip 5 frame ngang, mỗi frame 256x256. Runtime đọc theo quy tắc `frame_width=256`, `frame_height=256`, `columns=5`.
+Mỗi file trong `animations/<act>.png` là một horizontal strip gồm số frame tùy ý. Mỗi frame phải đúng `frame_width` x `frame_height`; runtime decode/validate PNG một lần khi load và tự phát hiện frame count từ `strip_width / frame_width`. `frames`/`columns` cũ trong manifest không còn là giới hạn số frame thực tế; `-catalog` load sprite store thật nên vừa hiển thị frame count đã detect vừa bắt lỗi strip sai chiều cao/chiều rộng.
+
+### Author animation từ các PNG frame rời
+
+Đặt các PNG frame đã vẽ vào một folder và dùng tên zero-padded để thứ tự lexical chính là thứ tự animation, ví dụ `0001.png`, `0002.png`, `0003.png`. Tool offline hiện có sẽ trim theo alpha bounds, giữ nguyên pixel (không scale), căn **visible bottom-center/feet** của mọi frame vào cùng `baseline-y`, đặt lên canvas trong suốt cố định rồi ghép thành một strip ngang:
+
+```bash
+cd go-lite
+go run -tags tools split_assets.go \
+  -frames /path/to/idle-frames \
+  -out /path/to/output/idle.png \
+  -width 256 -height 256 -baseline-y 224
+```
+
+Folder input chỉ cần các PNG frame; file không phải PNG bị bỏ qua. Frame fully-transparent, PNG hỏng, hoặc visible bounds không thể fit canvas/baseline sẽ làm command fail thay vì crop/scale ngầm. FPS, loop, `duration_ms`/`duration_s`, `native_facing`, kind và metadata animation vẫn nằm trong `pet.json`; `frames` nên ghi đúng N cho dễ đọc nhưng runtime vẫn detect N từ strip thật. Tool này chỉ pack/validate pixel art offline, không chạy image generation lúc PET runtime.
+
+Với `pet5`, canvas chuẩn hiện tại là 256x256 và `baseline_y=224`. Khi author pose mới, giữ chân/đáy thân quanh bottom-center; không cần tự căn padding giống nhau giữa các source PNG vì packer chuẩn hóa anchor đó. Chỉ đưa strip kết quả vào `assets/pets/<pet>/animations/<clip>.png` khi đó là artwork thật cần thêm/cập nhật, rồi chạy `pet-lite.exe -assets ..\assets -pet <pet> -catalog` để decode/validate asset runtime.
+
+Runtime Phase 12 cache BGRA đã scale/flip theo animation+frame+size+facing trong `SpriteStore`; các instance cùng pet dùng chung store/cache. Tick Win32 vẫn 16 ms cho input/brain/movement, nhưng pixel buffer chỉ copy khi visual frame thực sự đổi và `UpdateLayeredWindow` được bỏ qua khi cả frame, vị trí nguyên-pixel, facing và size đều không đổi.
+
+ZeroClaw vẫn chỉ phát semantic state (`listening`, `thinking`, `working`, `speaking`, success/error); renderer không biết intent. `pet5` hiện chưa có artwork riêng cho các state agent này, nên resolver tiếp tục dùng fallback animation hiện có thay vì invent/generated art trong runtime.
 
 Không cần hard-code tên pet trong code. Folder nào trong `assets/pets/<pet_id>` có `animations` thì được discover. App chỉ chạy pet được chọn qua `-pet`, nên không còn tự chạy tất cả pet ngoài ý muốn.
 

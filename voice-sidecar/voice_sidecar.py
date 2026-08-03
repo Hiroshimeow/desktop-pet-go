@@ -41,6 +41,8 @@ VOICE_NAME = "vi_VN-vais1000-medium"
 VOICE_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/vi/vi_VN/vais1000/medium"
 EN_VOICE_NAME = "en_US-lessac-medium"
 EN_VOICE_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
+KOKORO_VOICE = "jf_alpha"
+KOKORO_SAMPLE_RATE = 24_000
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ASSET_ROOT = REPO_ROOT / ".voice"
@@ -72,8 +74,22 @@ def tts_asset_paths(lang: str) -> tuple[Path, Path]:
     raise ValueError(f"unsupported speech language {lang!r}; use 'vi' or 'en'")
 
 
+def load_japanese_kokoro() -> Any:
+    from kokoro import KPipeline
+
+    return KPipeline(lang_code="j")
+
+
+def synthesize_japanese_kokoro(pipeline: Any, text: str) -> np.ndarray:
+    audio_chunks = [np.asarray(audio, dtype=np.float32).reshape(-1) for _, _, audio in pipeline(text, voice=KOKORO_VOICE)]
+    audio_chunks = [audio for audio in audio_chunks if audio.size]
+    if not audio_chunks:
+        raise RuntimeError("Kokoro returned no Japanese audio")
+    return np.concatenate(audio_chunks)
+
+
 def emit(event_type: str, **payload: Any) -> None:
-    print(json.dumps({"type": event_type, **payload}, ensure_ascii=False), flush=True)
+    print(json.dumps({"type": event_type, **payload}, ensure_ascii=True), flush=True)
 
 
 def diagnostic(message: str) -> None:
@@ -282,16 +298,19 @@ def setup_assets() -> None:
         chunks = list(voice.synthesize(sample))
         if not chunks or sum(len(chunk.audio_float_array) for chunk in chunks) == 0:
             raise RuntimeError(f"Piper {lang} self-check produced no audio")
+    kokoro = load_japanese_kokoro()
+    if synthesize_japanese_kokoro(kokoro, "こんにちは。音声を確認します。").size == 0:
+        raise RuntimeError("Kokoro Japanese self-check produced no audio")
     total = sum(path.stat().st_size for path in EXPECTED_SHA256)
     print(
         f"voice setup OK: {total / 1024 / 1024:.1f} MiB, STT={STT_REPO}@{STT_REVISION}, "
-        f"TTS={VOICE_NAME},{EN_VOICE_NAME}"
+        f"TTS={VOICE_NAME},{EN_VOICE_NAME},Kokoro-82M:{KOKORO_VOICE}"
     )
     del stt
 
 
 class VoiceRuntime:
-    def __init__(self, *, listen_enabled: bool = True) -> None:
+    def __init__(self, *, listen_enabled: bool = True, listen_on_command: bool = False) -> None:
         verify_assets()
         self.stt = WhisperModel(
             str(STT_DIR),
@@ -301,7 +320,10 @@ class VoiceRuntime:
             local_files_only=True,
         )
         self.tts: dict[str, Any] = {"vi": PiperVoice.load(TTS_MODEL, TTS_CONFIG)}
+        self.kokoro: Any = None
         self.listen_enabled = listen_enabled
+        self.listen_on_command = listen_on_command
+        self.listen_once_armed = False
         self.vad = webrtcvad.Vad(2)
         self.audio_queue: queue.Queue[tuple[int, bytes]] = queue.Queue(maxsize=400)
         self.command_queue: queue.Queue[dict[str, Any]] = queue.Queue()
@@ -371,6 +393,8 @@ class VoiceRuntime:
             self.stop_event.set()
 
     def read_commands(self) -> None:
+        if hasattr(sys.stdin, "reconfigure"):
+            sys.stdin.reconfigure(encoding="utf-8", errors="strict")
         for line in sys.stdin:
             try:
                 command = json.loads(line)
@@ -399,6 +423,21 @@ class VoiceRuntime:
             self.busy = True
             emit("state", state="idle")
             return
+        if getattr(self, "listen_on_command", False):
+            self.listen_once_armed = False
+            self.busy = True
+            emit("state", state="idle")
+            return
+        self.busy = False
+        emit("state", state="listening")
+
+    def arm_listen_once(self) -> None:
+        if not getattr(self, "listen_enabled", True) or not getattr(self, "listen_on_command", False):
+            return
+        if getattr(self, "listen_once_armed", False) or not self.busy:
+            return
+        self.clear_audio()
+        self.listen_once_armed = True
         self.busy = False
         emit("state", state="listening")
 
@@ -465,7 +504,6 @@ class VoiceRuntime:
             audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
             segments, _ = self.stt.transcribe(
                 audio,
-                language="vi",
                 beam_size=1,
                 best_of=1,
                 temperature=0,
@@ -477,6 +515,10 @@ class VoiceRuntime:
             if not text:
                 diagnostic("empty transcription; returning to wake listening")
                 self.resume_listening()
+                return
+            if getattr(self, "listen_on_command", False):
+                emit("utterance", turn_id=turn_id, text=text, eos_ns=eos_ns, stt_done_ns=stt_done_ns)
+                self.resume_listening(turn_id)
                 return
             self.pending[turn_id] = {"eos_ns": eos_ns, "stt_done_ns": stt_done_ns}
             emit("utterance", turn_id=turn_id, text=text, eos_ns=eos_ns, stt_done_ns=stt_done_ns)
@@ -490,12 +532,18 @@ class VoiceRuntime:
         emit("state", state="speaking", turn_id=turn_id, lang=lang)
         timing = self.pending.pop(turn_id, None)
         try:
-            voice = self.tts_for_language(lang)
-            chunks = list(voice.synthesize(text))
-            if not chunks:
-                raise RuntimeError("Piper returned no audio")
-            sample_rate = chunks[0].sample_rate
-            audio = np.concatenate([chunk.audio_float_array for chunk in chunks])
+            if lang == "ja":
+                if getattr(self, "kokoro", None) is None:
+                    self.kokoro = load_japanese_kokoro()
+                audio = synthesize_japanese_kokoro(self.kokoro, text)
+                sample_rate = KOKORO_SAMPLE_RATE
+            else:
+                voice = self.tts_for_language(lang)
+                chunks = list(voice.synthesize(text))
+                if not chunks:
+                    raise RuntimeError("Piper returned no audio")
+                sample_rate = chunks[0].sample_rate
+                audio = np.concatenate([chunk.audio_float_array for chunk in chunks])
             tts_done_ns = time.perf_counter_ns()
             first_audio_ns = play_output(
                 audio,
@@ -534,6 +582,8 @@ class VoiceRuntime:
             if command_type == "speak":
                 self.busy = True
                 self.speaker_queue.put(command)
+            elif command_type == "listen_once":
+                self.arm_listen_once()
             elif command_type == "resume":
                 self.resume_listening(str(command.get("turn_id", "")))
             elif command_type == "pause":
@@ -604,6 +654,7 @@ class VoiceRuntime:
             stt_revision=STT_REVISION,
             tts=VOICE_NAME,
             tts_en=EN_VOICE_NAME,
+            tts_ja=f"Kokoro-82M:{KOKORO_VOICE}",
         )
         if not getattr(self, "listen_enabled", True):
             self.busy = True
@@ -641,6 +692,7 @@ def main() -> int:
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--no-listen", action="store_true")
+    parser.add_argument("--listen-on-command", action="store_true")
     args = parser.parse_args()
     try:
         if args.setup:
@@ -649,7 +701,9 @@ def main() -> int:
         if args.list_devices:
             print(sd.query_devices())
             return 0
-        VoiceRuntime(listen_enabled=not args.no_listen).run()
+        if args.no_listen and args.listen_on_command:
+            raise ValueError("--no-listen and --listen-on-command are mutually exclusive")
+        VoiceRuntime(listen_enabled=not args.no_listen, listen_on_command=args.listen_on_command).run()
         return 0
     except Exception as exc:
         diagnostic(f"voice sidecar failed: {exc}")

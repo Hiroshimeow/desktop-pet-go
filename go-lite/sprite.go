@@ -16,13 +16,59 @@ type AnimationStrip struct {
 	Image  *image.NRGBA
 }
 
+type RenderFrame struct {
+	Width  int
+	Height int
+	BGRA   []byte
+}
+
+type renderCacheKey struct {
+	Animation string
+	Frame     int
+	Width     int
+	Height    int
+	Flip      bool
+}
+
 type SpriteStore struct {
-	Manifest   PetManifest
-	Animations map[string]*AnimationStrip
+	Manifest    PetManifest
+	Animations  map[string]*AnimationStrip
+	renderCache map[renderCacheKey]*RenderFrame
+}
+
+type visibleRenderState struct {
+	Animation string
+	Frame     int
+	X         int32
+	Y         int32
+	Flip      bool
+	Width     int
+	Height    int
+}
+
+func decideRender(previous *visibleRenderState, current visibleRenderState) (copyPixels, updateWindow bool) {
+	if previous == nil {
+		return true, true
+	}
+	if *previous == current {
+		return false, false
+	}
+	if previous.Animation == current.Animation &&
+		previous.Frame == current.Frame &&
+		previous.Flip == current.Flip &&
+		previous.Width == current.Width &&
+		previous.Height == current.Height {
+		return false, true
+	}
+	return true, true
 }
 
 func LoadSpriteStore(manifest PetManifest) (*SpriteStore, error) {
-	store := &SpriteStore{Manifest: manifest, Animations: map[string]*AnimationStrip{}}
+	store := &SpriteStore{
+		Manifest:    manifest,
+		Animations:  map[string]*AnimationStrip{},
+		renderCache: map[renderCacheKey]*RenderFrame{},
+	}
 	loadedDefs := make(map[string]AnimationDef, len(manifest.Animations))
 	var skipped []string
 	for name, def := range manifest.Animations {
@@ -89,6 +135,42 @@ func (s *SpriteStore) FrameRect(animation string, frame int) (*AnimationStrip, i
 		col += frames
 	}
 	return strip, col * s.Manifest.FrameWidth, 0, s.Manifest.FrameWidth, s.Manifest.FrameHeight, nil
+}
+
+func (s *SpriteStore) RenderFrame(animation string, frame, width, height int, flip bool) (*RenderFrame, error) {
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("invalid render size %dx%d", width, height)
+	}
+	strip, srcX, srcY, fw, fh, err := s.FrameRect(animation, frame)
+	if err != nil {
+		return nil, err
+	}
+	normalizedFrame := srcX / fw
+	key := renderCacheKey{Animation: animation, Frame: normalizedFrame, Width: width, Height: height, Flip: flip}
+	if cached, ok := s.renderCache[key]; ok {
+		return cached, nil
+	}
+
+	pixels := make([]byte, width*height*4)
+	stride := width * 4
+	for y := 0; y < height; y++ {
+		sy := srcY + y*fh/height
+		for x := 0; x < width; x++ {
+			sxOffset := x * fw / width
+			if flip {
+				sxOffset = fw - 1 - sxOffset
+			}
+			si := strip.Image.PixOffset(srcX+sxOffset, sy)
+			di := y*stride + x*4
+			pixels[di] = strip.Image.Pix[si+2]
+			pixels[di+1] = strip.Image.Pix[si+1]
+			pixels[di+2] = strip.Image.Pix[si]
+			pixels[di+3] = strip.Image.Pix[si+3]
+		}
+	}
+	rendered := &RenderFrame{Width: width, Height: height, BGRA: pixels}
+	s.renderCache[key] = rendered
+	return rendered, nil
 }
 
 func detectFrameCount(name string, def AnimationDef, path string, imageW, imageH int, manifest PetManifest) (int, error) {

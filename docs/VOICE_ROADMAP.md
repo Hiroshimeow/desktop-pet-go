@@ -1,31 +1,33 @@
-# Desktop Pet Bilingual Voice Roadmap
+# Desktop Pet Voice Roadmap
 
-Status: active roadmap from Phase 2 onward.
+Status: **Phases 1-9 are historical/accepted. Phase 10-12 are governed exclusively by `docs/PET_ZEROCLAW_SPEC.md`.**
 
 Baseline Phase 1 commit: `fd292701b59e3b4093098f75a9ef7ed9036d3fd9` (`feat: add Vietnamese realtime voice phase 1`).
 
-## Goal
+## Current goal
 
-Build a personal Windows desktop pet that can:
+Build a lightweight personal Windows desktop pet whose final supported path is:
 
-- talk naturally in Vietnamese and English;
-- understand deterministic voice commands in Vietnamese and English;
-- speak direct text and read local `.txt` / `.md` content;
-- read clipboard text;
-- use a local conversational model only;
-- keep the existing pet animation, movement, click and drag runtime responsive.
+- Vietnamese + Japanese wake/conversation;
+- existing local faster-whisper STT;
+- local VI/JA TTS;
+- Phase 9 deterministic fast local commands;
+- **ZeroClaw v0.8.3 Daemon + localhost Gateway as the only general agent brain**;
+- ZeroClaw-owned planning, memory/notes and reminders;
+- expressive semantic 2D animation with an easier PNG authoring path and low steady-state CPU.
+
+The canonical architecture, file allowlists, forbidden work, tests and ThinkBook acceptance for all post-Phase-9 work live in `docs/PET_ZEROCLAW_SPEC.md`. If this historical roadmap or `docs/VOICE_REQUIREMENTS.md` conflicts with that spec, the ZeroClaw spec wins for Phase 10-12.
 
 ## Keep it simple
 
 - Personal app, not a platform.
-- Keep Go as the pet/runtime orchestrator.
-- Reuse the existing Python voice sidecar, faster-whisper pipeline, Piper playback path and Phase 1 wake flow.
-- Do not create a provider registry, event bus, plugin framework, second microphone pipeline or generic AI-agent framework.
-- No PDF, OCR, Japanese, VOICEVOX, cloud LLM or remote voice API.
-- No separate TEST/AUDIT role. Every phase uses CDPA roles `PLAN`, `DEV`, `REVIEW` only.
-- Preferred route: `PLAN -> DEV -> REVIEW -> PLAN -> DONE`.
-- Every phase is one CDPA task. Later phases use real `depends_on_task_ids`.
-- All implementation phases remain sequential on the same repo/branch. Although some concepts could be developed independently, they touch shared voice/router files; adding worktrees and merge work only to parallelize them is not worth it for this app.
+- PET owns body/voice/reflexes; ZeroClaw owns the agent brain.
+- Do not rebuild agent loop, provider routing, memory, planner, scheduler, generic tools or MCP framework in PET.
+- Production transport is **Daemon + Gateway**, not ACP.
+- Reuse the current voice sidecar, STT, animation intent architecture and Phase 9 local command path.
+- Only three post-Phase-9 tasks exist: Phase 10, 11 and 12.
+- No separate TEST/AUDIT role. Every phase uses `PLAN`, `DEV`, `REVIEW` and the route `PLAN -> DEV -> REVIEW -> PLAN -> DONE`.
+- Work remains sequential on the same accepted working-tree lineage; do not introduce worktree/merge machinery only to parallelize it.
 
 ## Hard anti-overengineering contract
 
@@ -75,29 +77,25 @@ If the phase works, existing relevant tests pass, and the bounded runtime smoke 
 ## Dependency graph
 
 ```text
-Phase 1 DONE
+Phase 1-8 historical accepted voice work
   |
   v
-Phase 2 bilingual core + TXT/MD reader
+Phase 9 deterministic click-to-command
   |
   v
-Phase 3 controls + cumulative Windows acceptance
+Phase 10 ZeroClaw brain + VI/JA voice
   |
   v
-Phase 4 bilingual voice commands
+Phase 11 ZeroClaw personal-agent behavior
   |
   v
-Phase 5 local-model conversation
+Phase 12 expressive 2D + performance + final acceptance
   |
   v
-Phase 6 command/conversation router
-  |
-  v
-Phase 7 lightweight memory + personality
-  |
-  v
-Phase 8 final hardening + Windows acceptance
+DONE
 ```
+
+Exact Phase 10-12 contracts are defined only in `docs/PET_ZEROCLAW_SPEC.md`.
 
 ---
 

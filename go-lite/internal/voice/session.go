@@ -3,6 +3,8 @@ package voice
 import (
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type Session struct {
@@ -37,6 +39,11 @@ func (s *Session) Handle(text string, now time.Time) (Reply, bool) {
 }
 
 func stripWake(text string) (string, bool) {
+	for _, wake := range []string{"ペット", "ねえ ペット"} {
+		if rest, ok := stripJapaneseWake(text, wake); ok {
+			return rest, true
+		}
+	}
 	for _, wake := range []string{
 		"pet ơi", "pet oi", "pét ơi",
 		"bét ơi", "bết ơi", "bet oi",
@@ -48,6 +55,24 @@ func stripWake(text string) (string, bool) {
 		if strings.HasPrefix(text, wake+" ") {
 			return strings.TrimSpace(strings.TrimPrefix(text, wake)), true
 		}
+	}
+	return text, false
+}
+
+func stripJapaneseWake(text, wake string) (string, bool) {
+	if text == wake {
+		return "", true
+	}
+	if strings.HasPrefix(text, wake+" ") {
+		return strings.TrimSpace(strings.TrimPrefix(text, wake)), true
+	}
+	if !strings.HasPrefix(text, wake) {
+		return text, false
+	}
+	rest := strings.TrimPrefix(text, wake)
+	r, _ := utf8.DecodeRuneInString(rest)
+	if unicode.In(r, unicode.Hiragana, unicode.Han) {
+		return strings.TrimSpace(rest), true
 	}
 	return text, false
 }

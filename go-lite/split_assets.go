@@ -3,105 +3,148 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
 	"image/png"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
-const toolFrameW = 256
-const toolFrameH = 256
-const toolCols = 5
-const toolRows = 8
-
-var rowsFromAnimation1 = []string{
-	"idle.png",
-	"walk.png",
-	"run.png",
-	"happy.png",
-	"cry.png",
-	"angry.png",
-	"wave.png",
-	"sleepy.png",
-}
-
-var rowsFromAnimation2 = []string{
-	"surprised.png",
-	"shy.png",
-	"thinking.png",
-	"cheer.png",
-	"scared.png",
-	"dizzy.png",
-	"dance.png",
-	"sit_idle.png",
-}
-
 func main() {
-	if err := split("..\\assets\\animation1.png", "..\\assets\\animations", rowsFromAnimation1); err != nil {
-		panic(err)
-	}
-	if err := split("..\\assets\\animation2.png", "..\\assets\\animations", rowsFromAnimation2); err != nil {
-		panic(err)
+	framesDir := flag.String("frames", "", "folder containing ordered PNG frames")
+	outPath := flag.String("out", "", "output horizontal PNG strip")
+	frameWidth := flag.Int("width", 0, "output frame width in pixels")
+	frameHeight := flag.Int("height", 0, "output frame height in pixels")
+	baselineY := flag.Int("baseline-y", 0, "output bottom-center feet baseline in pixels")
+	flag.Parse()
+
+	if err := packFrames(*framesDir, *outPath, *frameWidth, *frameHeight, *baselineY); err != nil {
+		fmt.Fprintln(os.Stderr, "pack frames:", err)
+		os.Exit(1)
 	}
 }
 
-func split(srcPath, outDir string, names []string) error {
-	if err := os.MkdirAll(outDir, 0755); err != nil {
-		return err
+func packFrames(framesDir, outPath string, frameWidth, frameHeight, baselineY int) error {
+	if framesDir == "" || outPath == "" {
+		return fmt.Errorf("-frames and -out are required")
 	}
-	file, err := os.Open(srcPath)
+	if frameWidth <= 0 || frameHeight <= 0 {
+		return fmt.Errorf("frame size must be positive")
+	}
+	if baselineY <= 0 || baselineY > frameHeight {
+		return fmt.Errorf("baseline-y must be within 1..%d", frameHeight)
+	}
+
+	entries, err := os.ReadDir(framesDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("read frames folder: %w", err)
 	}
-	defer file.Close()
-	img, _, err := image.Decode(file)
+	outAbs, err := filepath.Abs(outPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve output path: %w", err)
 	}
-	b := img.Bounds()
-	cellW := float64(b.Dx()) / float64(toolCols)
-	cellH := float64(b.Dy()) / float64(toolRows)
-	for row, name := range names {
-		strip := image.NewNRGBA(image.Rect(0, 0, toolFrameW*toolCols, toolFrameH))
-		for col := 0; col < toolCols; col++ {
-			left := int(float64(col)*cellW + 0.5)
-			top := int(float64(row)*cellH + 0.5)
-			right := int(float64(col+1)*cellW + 0.5)
-			bottom := int(float64(row+1)*cellH + 0.5)
-			frame := image.NewNRGBA(image.Rect(0, 0, toolFrameW, toolFrameH))
-			dst := image.Rect(col*toolFrameW, 0, (col+1)*toolFrameW, toolFrameH)
-			scaleNearestTransparent(strip, dst, img, image.Rect(left, top, right, bottom))
-			_ = frame
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".png") {
+			continue
 		}
-		outPath := filepath.Join(outDir, name)
-		out, err := os.Create(outPath)
+		path := filepath.Join(framesDir, entry.Name())
+		pathAbs, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve frame %s: %w", entry.Name(), err)
+		}
+		if filepath.Clean(pathAbs) == filepath.Clean(outAbs) {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		return fmt.Errorf("frames folder contains no PNG files")
+	}
+
+	strip := image.NewNRGBA(image.Rect(0, 0, frameWidth*len(paths), frameHeight))
+	for i, path := range paths {
+		img, err := decodePNG(path)
 		if err != nil {
 			return err
 		}
-		if err := png.Encode(out, strip); err != nil {
-			out.Close()
-			return err
+		bounds, ok := visibleAlphaBounds(img)
+		if !ok {
+			return fmt.Errorf("frame %s is fully transparent", filepath.Base(path))
 		}
-		out.Close()
-		fmt.Println(outPath)
+		left := frameWidth/2 - bounds.Dx()/2
+		top := baselineY - bounds.Dy()
+		if left < 0 || top < 0 || left+bounds.Dx() > frameWidth || baselineY > frameHeight {
+			return fmt.Errorf("frame %s visible bounds %dx%d do not fit %dx%d at baseline-y=%d", filepath.Base(path), bounds.Dx(), bounds.Dy(), frameWidth, frameHeight, baselineY)
+		}
+		dst := image.Rect(i*frameWidth+left, top, i*frameWidth+left+bounds.Dx(), baselineY)
+		draw.Draw(strip, dst, img, bounds.Min, draw.Src)
 	}
+
+	if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
+		return fmt.Errorf("create output folder: %w", err)
+	}
+	f, err := os.Create(outAbs)
+	if err != nil {
+		return fmt.Errorf("create output: %w", err)
+	}
+	if err := png.Encode(f, strip); err != nil {
+		f.Close()
+		return fmt.Errorf("encode output: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close output: %w", err)
+	}
+	fmt.Printf("packed %d frame(s) -> %s (%dx%d each, baseline-y=%d)\n", len(paths), outAbs, frameWidth, frameHeight, baselineY)
 	return nil
 }
 
-func scaleNearestTransparent(dst draw.Image, dr image.Rectangle, src image.Image, sr image.Rectangle) {
-	for y := dr.Min.Y; y < dr.Max.Y; y++ {
-		sy := sr.Min.Y + (y-dr.Min.Y)*sr.Dy()/dr.Dy()
-		for x := dr.Min.X; x < dr.Max.X; x++ {
-			sx := sr.Min.X + (x-dr.Min.X)*sr.Dx()/dr.Dx()
-			r, g, b, a := src.At(sx, sy).RGBA()
-			r8, g8, b8, a8 := uint8(r>>8), uint8(g>>8), uint8(b>>8), uint8(a>>8)
-			if r8 > 238 && g8 > 238 && b8 > 238 {
-				a8 = 0
+func decodePNG(path string) (image.Image, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open frame %s: %w", filepath.Base(path), err)
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		return nil, fmt.Errorf("decode frame %s: %w", filepath.Base(path), err)
+	}
+	return img, nil
+}
+
+func visibleAlphaBounds(img image.Image) (image.Rectangle, bool) {
+	b := img.Bounds()
+	minX, minY := b.Max.X, b.Max.Y
+	maxX, maxY := b.Min.X, b.Min.Y
+	found := false
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			_, _, _, a := img.At(x, y).RGBA()
+			if a == 0 {
+				continue
 			}
-			dst.Set(x, y, color.NRGBA{R: r8, G: g8, B: b8, A: a8})
+			found = true
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x+1 > maxX {
+				maxX = x + 1
+			}
+			if y+1 > maxY {
+				maxY = y + 1
+			}
 		}
 	}
+	if !found {
+		return image.Rectangle{}, false
+	}
+	return image.Rect(minX, minY, maxX, maxY), true
 }

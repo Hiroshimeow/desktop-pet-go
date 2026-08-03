@@ -19,6 +19,42 @@ func TestSessionWakeAndQuestionSameUtterance(t *testing.T) {
 			t.Fatalf("Handle(%q) = (%+v, %v), want identity reply", text, got, ok)
 		}
 	}
+	for _, text := range []string{
+		"ペット、今日はどう？",
+		"ねえ ペット、今日はどう？",
+	} {
+		s := NewSession(5 * time.Second)
+		if _, ok := s.Handle(text, now); !ok {
+			t.Fatalf("Handle(%q) did not accept Japanese wake + question", text)
+		}
+	}
+}
+
+func TestSessionJapaneseWakeRejectsNearMatch(t *testing.T) {
+	now := time.Unix(100, 0)
+	for _, text := range []string{
+		"ペットボトル、今日はどう？",
+		"ねえ ペットボトル、今日はどう？",
+	} {
+		s := NewSession(5 * time.Second)
+		if _, ok := s.Handle(text, now); ok {
+			t.Fatalf("Japanese near-match %q must not wake the pet", text)
+		}
+	}
+}
+
+func TestSessionJapaneseWakeAllowsNaturalNoSpaceSentence(t *testing.T) {
+	now := time.Unix(100, 0)
+	for _, text := range []string{
+		"ペット今日はどう？",
+		"ペット元気ですか",
+		"ねえ ペット今日はどう？",
+	} {
+		s := NewSession(5 * time.Second)
+		if _, ok := s.Handle(text, now); !ok {
+			t.Fatalf("Japanese no-space wake %q was rejected", text)
+		}
+	}
 }
 
 func TestSessionWakeThenFollowUp(t *testing.T) {

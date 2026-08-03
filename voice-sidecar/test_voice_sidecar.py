@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import queue
@@ -29,6 +30,7 @@ from voice_sidecar import (
     SAMPLE_RATE,
     VoiceRuntime,
     build_turn_metrics,
+    emit,
     frame_is_speech,
     load_simulated_sequence,
     simulated_manifest_path,
@@ -41,7 +43,109 @@ class AlwaysSpeech:
         return True
 
 
+class ProtocolEncodingTest(unittest.TestCase):
+    def test_emit_is_safe_on_legacy_windows_stdout(self) -> None:
+        buffer = io.BytesIO()
+        stdout = io.TextIOWrapper(buffer, encoding="cp1252", errors="strict")
+        try:
+            with patch("voice_sidecar.sys.stdout", stdout):
+                emit("utterance", text="Mèo ơi, dừng lại.")
+            stdout.flush()
+            raw = buffer.getvalue()
+        finally:
+            stdout.detach()
+
+        self.assertTrue(raw.isascii())
+        self.assertEqual(json.loads(raw)["text"], "Mèo ơi, dừng lại.")
+
+    def test_read_commands_forces_utf8_for_go_pipe(self) -> None:
+        raw = (
+            json.dumps(
+                {"type": "speak", "text": "Mèo ơi, mình ở nhà nhé.", "lang": "vi"},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            + b"\n"
+        )
+        stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="cp1252", errors="surrogateescape")
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.command_queue = queue.Queue()
+        try:
+            with patch("voice_sidecar.sys.stdin", stdin):
+                runtime.read_commands()
+            command = runtime.command_queue.get_nowait()
+        finally:
+            stdin.detach()
+
+        self.assertEqual(command["text"], "Mèo ơi, mình ở nhà nhé.")
+
+
 class LanguageRoutingTest(unittest.TestCase):
+    def test_transcribe_uses_auto_language_for_vi_and_ja(self) -> None:
+        class Segment:
+            text = "ペット、こんにちは"
+
+        class FakeSTT:
+            def __init__(self) -> None:
+                self.kwargs: dict[str, object] | None = None
+
+            def transcribe(self, _audio, **kwargs):
+                self.kwargs = kwargs
+                return [Segment()], None
+
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.busy = False
+        runtime.stt = FakeSTT()
+        runtime.pending = {}
+        runtime.listen_on_command = False
+        with patch("voice_sidecar.emit"):
+            runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
+
+        self.assertIsNotNone(runtime.stt.kwargs)
+        self.assertNotIn("language", runtime.stt.kwargs)
+
+    def test_japanese_speak_uses_kokoro_and_vietnamese_stays_piper(self) -> None:
+        class FakePiperChunk:
+            sample_rate = SAMPLE_RATE
+            audio_float_array = np.ones(16, dtype=np.float32)
+
+        class FakePiper:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def synthesize(self, text: str):
+                self.calls.append(text)
+                return [FakePiperChunk()]
+
+        class FakeKokoro:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            def __call__(self, text: str, *, voice: str):
+                self.calls.append((text, voice))
+                return [(None, None, np.ones(24, dtype=np.float32))]
+
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.busy = True
+        runtime.pending = {}
+        runtime.audio_queue = queue.Queue()
+        runtime.listen_enabled = False
+        runtime.playback_paused = threading.Event()
+        runtime.playback_cancelled = threading.Event()
+        runtime.tts = {"vi": FakePiper()}
+        runtime.kokoro = FakeKokoro()
+        events: list[tuple[str, dict[str, object]]] = []
+        with (
+            patch("voice_sidecar.play_output", return_value=123),
+            patch("voice_sidecar.emit", side_effect=lambda event_type, **payload: events.append((event_type, payload))),
+        ):
+            runtime.speak("ja-turn", "こんにちは", "ja")
+            runtime.speak("vi-turn", "Xin chào", "vi")
+
+        self.assertEqual(runtime.kokoro.calls, [("こんにちは", "jf_alpha")])
+        self.assertEqual(runtime.tts["vi"].calls, ["Xin chào"])
+        done_langs = [payload["lang"] for event_type, payload in events if event_type == "speak_done"]
+        self.assertEqual(done_langs, ["ja", "vi"])
+
     def test_vi_en_use_distinct_piper_assets(self) -> None:
         vi_model, vi_config = tts_asset_paths("vi")
         en_model, en_config = tts_asset_paths("en")
@@ -205,6 +309,51 @@ class FrameSpeechGateTest(unittest.TestCase):
     def test_allows_audible_frame_to_reach_vad(self) -> None:
         audible = np.full(480, 512, dtype=np.int16).tobytes()
         self.assertTrue(frame_is_speech(audible, AlwaysSpeech()))
+
+
+class ListenOnceTest(unittest.TestCase):
+    def test_listen_once_emits_one_utterance_and_returns_idle_without_overlap(self) -> None:
+        class Segment:
+            text = "open notepad"
+
+        class FakeSTT:
+            def transcribe(self, _audio, **_kwargs):
+                return [Segment()], None
+
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.listen_enabled = True
+        runtime.listen_on_command = True
+        runtime.listen_once_armed = False
+        runtime.busy = True
+        runtime.audio_queue = queue.Queue(maxsize=400)
+        runtime.command_queue = queue.Queue()
+        runtime.stop_event = threading.Event()
+        runtime.pending = {}
+        runtime.stt = FakeSTT()
+
+        runtime.command_queue.put({"type": "listen_once"})
+        runtime.command_queue.put({"type": "listen_once"})
+        events: list[tuple[str, dict[str, object]]] = []
+        with patch("voice_sidecar.emit", side_effect=lambda event_type, **payload: events.append((event_type, payload))):
+            runtime.handle_commands()
+            self.assertFalse(runtime.busy)
+            self.assertTrue(runtime.listen_once_armed)
+            self.assertEqual([state for event, payload in events if event == "state" for state in [payload.get("state")]], ["listening"])
+
+            runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
+            utterances = [payload for event, payload in events if event == "utterance"]
+            self.assertEqual(len(utterances), 1)
+            self.assertEqual(utterances[0]["text"], "open notepad")
+            self.assertTrue(runtime.busy)
+            self.assertFalse(runtime.listen_once_armed)
+            self.assertEqual(events[-1], ("state", {"state": "idle"}))
+
+            runtime.command_queue.put({"type": "listen_once"})
+            runtime.handle_commands()
+            self.assertFalse(runtime.busy)
+            self.assertTrue(runtime.listen_once_armed)
+            listening_states = [payload for event, payload in events if event == "state" and payload.get("state") == "listening"]
+            self.assertEqual(len(listening_states), 2)
 
 
 class PlaybackControlTest(unittest.TestCase):

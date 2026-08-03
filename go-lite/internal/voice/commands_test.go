@@ -24,6 +24,18 @@ func TestParseCommandExactBilingualPhrases(t *testing.T) {
 		{"read clipboard", CommandReadClipboard},
 		{"trạng thái", CommandStatus},
 		{"status", CommandStatus},
+		{"mở chrome", CommandOpenChrome},
+		{"open chrome", CommandOpenChrome},
+		{"mở facebook", CommandOpenFacebook},
+		{"open facebook", CommandOpenFacebook},
+		{"mở youtube", CommandOpenYouTube},
+		{"open youtube", CommandOpenYouTube},
+		{"mở lịch", CommandOpenCalendar},
+		{"open calendar", CommandOpenCalendar},
+		{"mở notepad", CommandOpenNotepad},
+		{"mở ghi chú", CommandOpenNotepad},
+		{"open notepad", CommandOpenNotepad},
+		{"open note", CommandOpenNotepad},
 	}
 	for _, tt := range tests {
 		got, ok := ParseCommand(tt.input)
@@ -42,6 +54,8 @@ func TestParseCommandNormalizationWakeAndUnknown(t *testing.T) {
 		{"  PET ƠI,   TẠM DỪNG!!! ", CommandPause},
 		{"pet ơi, pause", CommandPause},
 		{"STATUS!!!", CommandStatus},
+		{"  PET ƠI, MỞ CHROME!!! ", CommandOpenChrome},
+		{"pet ơi, open youtube", CommandOpenYouTube},
 	}
 	for _, tt := range matches {
 		got, ok := ParseCommand(tt.input)
@@ -50,7 +64,11 @@ func TestParseCommandNormalizationWakeAndUnknown(t *testing.T) {
 		}
 	}
 
-	for _, input := range []string{"pause please", "please stop", "đọc clipboard ngay", "hôm nay thế nào"} {
+	for _, input := range []string{
+		"pause please", "please stop", "đọc clipboard ngay", "hôm nay thế nào",
+		"open youtube cats", "mở facebook ngay", "open calendar tomorrow",
+		"please open chrome", "open calculator",
+	} {
 		if got, ok := ParseCommand(input); ok {
 			t.Fatalf("ParseCommand(%q) = (%q, true), want non-command", input, got)
 		}
