@@ -1,3 +1,15 @@
+# PRIVATE LOCAL-ONLY workspace artifacts
+# These files may contain Pi sessions, personal paths, model/provider details and raw evidence.
+# Keep local but NEVER stage/push. Generic product code/tests remain shareable after review.
+/AGENTS.md
+/GOAL.md
+/.agents/
+/.pi/
+/docs/voice-dictation/
+/scripts/pi-live.ps1
+/.local-evidence/
+/*.session.jsonl
+
 # Build outputs
 *.exe
 *.dll
