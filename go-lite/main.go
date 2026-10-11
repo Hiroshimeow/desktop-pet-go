@@ -161,19 +161,22 @@ type InputEvent struct {
 }
 
 type App struct {
-	Profile      Profile
-	Pets         []*WindowPet
-	Inputs       chan InputEvent
-	ScreenW      int
-	ScreenH      int
-	ClickCommand string
-	RightCommand string
-	HookTimeout  time.Duration
-	HookSem      chan struct{}
-	VoiceEvents  chan voiceEvent
-	Voice        *VoiceController
-	TimerID      uintptr
-	LastTick     time.Time
+	Profile         Profile
+	Pets            []*WindowPet
+	Inputs          chan InputEvent
+	ScreenW         int
+	ScreenH         int
+	ClickCommand    string
+	RightCommand    string
+	HookTimeout     time.Duration
+	HookSem         chan struct{}
+	VoiceEvents     chan voiceEvent
+	Voice           *VoiceController
+	DictationKeys   *dictationHotkeys
+	Dictation       dictationSession
+	DictationSerial uint64
+	TimerID         uintptr
+	LastTick        time.Time
 }
 
 var app *App
@@ -202,11 +205,25 @@ func main() {
 	sayText := flag.String("say", "", "speak text once in Vietnamese or English")
 	readFile := flag.String("read-file", "", "read a local UTF-8 .txt or .md file")
 	readLang := flag.String("read-lang", "auto", "speech language: auto, vi, or en")
+	dictationEnabled := flag.Bool("dictation", false, "enable local global dictation input on the resident voice sidecar")
+	dictationToggle := flag.String("dictation-toggle", "F5", "dictation toggle shortcut; Ctrl/Shift+function key or Ctrl+letter; empty disables")
+	dictationHold := flag.String("dictation-hold", "F6", "hold-to-talk shortcut; empty disables")
 	flag.Parse()
 
 	initLog()
 	if *voiceEnabled && *commandMode {
 		fatalExit(1, "-voice and -command are mutually exclusive")
+	}
+	if *dictationEnabled && (*voiceEnabled || *commandMode) {
+		fatalExit(1, "-dictation requires the no-listen sidecar; -voice/-command own microphone capture")
+	}
+	var dictationBindings dictationBindings
+	if *dictationEnabled {
+		var err error
+		dictationBindings, err = parseDictationBindings(*dictationToggle, *dictationHold)
+		if err != nil {
+			fatalExit(1, "dictation configuration: %v", err)
+		}
 	}
 	voiceRequested := *voiceEnabled || *commandMode || *sayText != "" || *readFile != ""
 	log.Printf("startup args profile=%q assets=%q pet=%q count=%d scale=%.2f catalog=%v voice=%v command=%v say=%v read_file=%q read_lang=%q click_cmd=%v right_cmd=%v", *profilePath, *assetsPath, *petSelect, *petsOverride, *scaleOverride, *catalog, *voiceEnabled, *commandMode, *sayText != "", *readFile, *readLang, *clickCommand != "", *rightCommand != "")
@@ -232,6 +249,16 @@ func main() {
 	defer app.stopVoice()
 	if voiceRequested {
 		app.startVoiceAsync(*voiceEnabled, *commandMode, *sayText, *readFile, *readLang)
+	}
+	if *dictationEnabled {
+		keys, err := startDictationHotkeys(dictationBindings)
+		if err != nil {
+			log.Printf("dictation disabled: %v", err)
+		} else {
+			app.DictationKeys = keys
+			defer keys.stop()
+			app.startVoiceController(false, nil)
+		}
 	}
 	messageLoop()
 }
@@ -577,6 +604,7 @@ func (a *App) tick() {
 
 	a.processInputEvents()
 	a.processVoiceEvents()
+	a.processDictationInputs()
 	now := time.Now()
 	dt := now.Sub(a.LastTick).Seconds()
 	if dt <= 0 || dt > 0.05 {

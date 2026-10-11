@@ -513,6 +513,9 @@ func (a *App) processVoiceEvents() {
 }
 
 func (a *App) handleVoiceEvent(event voiceEvent) {
+	if a.handleDictationEvent(event) {
+		return
+	}
 	if a.Voice == nil {
 		return
 	}
