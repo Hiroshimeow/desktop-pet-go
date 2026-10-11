@@ -18,10 +18,10 @@
 | **Next gate** | G04 — evaluate Handy/OpenWhispr/Windows port and reusable streaming mechanisms |
 | **Last accepted change** | `fe9d81f` — Go discovery test isolated from user-installed pet assets |
 | **Confirmed baseline** | Go `go test -count=1 ./...` PASS; Python sidecar 18/18 PASS on G6 |
-| **Last checked** | 2026-10-11 ~17:18 JST, G6 Git + test evidence |
+| **Last checked** | 2026-10-11 ~17:46 JST, same native Pi session; Go/Python baselines freshly rerun PASS; G03 source map under factual review |
 | **Active blocker** | None confirmed for G03. Real microphone, CPU latency and Windows target insertion remain UNVERIFIED, not PASS. |
-| **Operational risk** | Two Pi processes were observed with the same session ID: older owned `--print` PID 25996 and newer interactive PID 22920. Stop the stale client through an authorized process-owner action before permitting concurrent writes; identity must be rechecked because PIDs can change. |
-| **Immediate next artifact** | `docs/voice-dictation/REFERENCE_MATRIX.md`: OSW source SHA + exact file/function/behavior + known missing features and licensing |
+| **Operational risk** | Rechecked ~17:32 JST: old PIDs 25996/22920 absent; one Pi node process explicitly names this session (PID 5628, interactive launcher parent 23528). No competing process with this session ID observed. Other Pi clients have different/unspecified sessions and were not stopped. Preserve operator commits through HEAD `8f3cebf`. |
+| **Immediate next artifact** | Reconcile factual review of `docs/voice-dictation/REFERENCE_MATRIX.md` OSW01–21/test trace; retain G03 DOING until semantic verification closes |
 
 **Operator view:** `GOAL.md` for status → `docs/voice-dictation/TASKS.md` for detailed queue → `docs/voice-dictation/BASELINE.md` / `REFERENCE_MATRIX.md` for evidence. Update the table immediately whenever the current gate or blocker changes. Push verified milestone updates to `origin/develop` so the remote view stays useful.
 
@@ -48,7 +48,7 @@ Allowed states: `TODO` / `DOING` / `PASS` / `BLOCKED`. Only **one primary DOING 
 | **G00** | Single canonical `develop`; archived previous dirty changes; no competing worktree | **PASS** | `ecfd5a2`; backup tag `archive/pre-develop-20261011`; one registered Git worktree |
 | **G01** | Go baseline robust on real G6 checkout, including extra ignored user assets | **PASS** | `fe9d81f`; `cd go-lite; go test -count=1 ./...` exit 0 (2026-10-11) |
 | **G02** | Python voice sidecar baseline reproducible | **PASS** | `uv sync --frozen`; `uv run --no-sync python -m unittest -q test_voice_sidecar.py` → 18 PASS |
-| **G03** | OSW relevant workflow/edge-case **source-level parity map**, pinned SHA/license; gaps honestly marked | **DOING** | Provide exact functions/files in `REFERENCE_MATRIX.md`; no README-only assertions |
+| **G03** | OSW relevant workflow/edge-case **source-level parity map**, pinned SHA/license; gaps honestly marked | **DOING** | `REFERENCE_MATRIX.md`: OSW01–21 + test trace drafted; source pins/paths structurally checked, independent factual review pending. `SOURCE_AUDIT.md` fresh baseline evidence; no native/macOS PASS |
 | **G04** | Handy/OpenWhispr/OSW-Windows + local caption research; Windows Handy API/CLI limits demonstrated | TODO | Source/commit mapping + real native smoke and limitations |
 | **G05** | One justified STT/GUI/insertion architecture based on parity, API limits and measured evidence | TODO | Decision record with reusable components, missing interfaces and failure handling |
 | **G06** | G6 real microphone input + local Vietnamese/English/code-switch CPU accuracy/latency benchmark | TODO | Auditable WAV reference set (private), WER/CER, warm/cold p50/p95, CPU/RSS; no guessed numbers |
@@ -100,8 +100,10 @@ When two solutions satisfy **the same complete contract**, choose the proven sim
 | 2026-10-11 17:12 | G01 | Environment-sensitive pet discovery test fixed with isolated assets; full Go test PASS | `fe9d81f` |
 | 2026-10-11 ~17:18 | G02 | Python sidecar 18/18 PASS on Windows G6; canonical Go suite independently rechecked PASS | `docs/voice-dictation/BASELINE.md` + local runs |
 | 2026-10-11 after 17:20 | OPS | Observed duplicate Pi clients sharing one session ID; earlier session termination handle expired; no claim of single writer until verified | Old `--print` PID 25996; newer interactive PID 22920 |
+| 2026-10-11 ~17:32 | G03/OPS | Read authoritative contract, preserved uncommitted SOURCE_AUDIT/BENCHMARK and operator commits; same session identity, old duplicate PIDs absent, only one explicit matching Pi client. G03 remains sole DOING; preliminary CLI/batch work does not pass G04/G06. | HEAD `8f3cebf`; OSW source `c8e6fe79d6851078940f459ab7dbc8ee39e2a97d` |
+| 2026-10-11 ~17:46 | G03 | Drafted OSW01–21 relevant source map, explicit live/target/privacy/cancellation gaps and test trace; structural probe validates 20 test files and dependency pins. Fresh Go regression exit0; Python18/18 in0.588s; diff check exit0. Read-only factual review pending; G03 DOING, G04/G06 not accepted. | `REFERENCE_MATRIX.md`, `SOURCE_AUDIT.md`, `BENCHMARK.md` |
 
-**Current next step:** complete **G03** OSW relevant dictation behavior map with pinned source and indicate which features require verified Windows adaptations; don't build a second independent voice core.
+**Current next step:** reconcile **G03** source-map factual review before acceptance; no native OSW runtime claim or second independent voice core.
 
 ---
 
