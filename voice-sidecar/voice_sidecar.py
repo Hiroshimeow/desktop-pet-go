@@ -329,6 +329,7 @@ class VoiceRuntime:
         self.command_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.speaker_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.stop_event = threading.Event()
+        self.lifecycle_lock = threading.Lock()
         self.playback_paused = threading.Event()
         self.playback_cancelled = threading.Event()
         self.playback_active = threading.Event()
@@ -399,9 +400,15 @@ class VoiceRuntime:
             try:
                 command = json.loads(line)
                 if isinstance(command, dict):
+                    if command.get("type") == "shutdown":
+                        # The control loop may be inside a native STT call.
+                        self.shutdown()
+                        self.command_queue.put(command)
+                        return
                     self.command_queue.put(command)
             except json.JSONDecodeError as exc:
                 diagnostic(f"invalid command JSON: {exc}")
+        self.shutdown()
         self.command_queue.put({"type": "shutdown"})
 
     def clear_audio(self) -> None:
@@ -454,8 +461,10 @@ class VoiceRuntime:
         self.playback_cancelled.set()
 
     def shutdown(self) -> None:
-        self.playback_cancelled.set()
-        self.stop_event.set()
+        # Serialize termination with STT publication, not with native inference.
+        with self.lifecycle_lock:
+            self.playback_cancelled.set()
+            self.stop_event.set()
 
     def start_speaker_worker(self) -> threading.Thread:
         worker = self.speaker_thread
@@ -497,8 +506,11 @@ class VoiceRuntime:
         return voice
 
     def transcribe(self, pcm: bytes, eos_ns: int) -> None:
-        self.busy = True
-        emit("state", state="thinking")
+        with self.lifecycle_lock:
+            self.busy = True
+            if self.stop_event.is_set():
+                return
+            emit("state", state="thinking")
         turn_id = uuid.uuid4().hex[:12]
         try:
             audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
@@ -512,20 +524,28 @@ class VoiceRuntime:
             )
             text = " ".join(segment.text.strip() for segment in segments).strip()
             stt_done_ns = time.perf_counter_ns()
-            if not text:
-                diagnostic("empty transcription; returning to wake listening")
-                self.resume_listening()
-                return
-            if getattr(self, "listen_on_command", False):
+            # faster-whisper decodes lazily while segments are consumed. Keep
+            # native inference outside the lock; fence only result publication.
+            with self.lifecycle_lock:
+                if self.stop_event.is_set():
+                    return
+                if not text:
+                    diagnostic("empty transcription; returning to wake listening")
+                    self.resume_listening()
+                    return
+                if getattr(self, "listen_on_command", False):
+                    emit("utterance", turn_id=turn_id, text=text, eos_ns=eos_ns, stt_done_ns=stt_done_ns)
+                    self.resume_listening(turn_id)
+                    return
+                self.pending[turn_id] = {"eos_ns": eos_ns, "stt_done_ns": stt_done_ns}
                 emit("utterance", turn_id=turn_id, text=text, eos_ns=eos_ns, stt_done_ns=stt_done_ns)
-                self.resume_listening(turn_id)
-                return
-            self.pending[turn_id] = {"eos_ns": eos_ns, "stt_done_ns": stt_done_ns}
-            emit("utterance", turn_id=turn_id, text=text, eos_ns=eos_ns, stt_done_ns=stt_done_ns)
         except Exception as exc:
-            diagnostic(f"STT failed: {exc}")
-            emit("state", state="error", detail=f"STT failed: {exc}")
-            self.resume_listening()
+            with self.lifecycle_lock:
+                if self.stop_event.is_set():
+                    return
+                diagnostic(f"STT failed: {exc}")
+                emit("state", state="error", detail=f"STT failed: {exc}")
+                self.resume_listening()
 
     def speak(self, turn_id: str, text: str, lang: str = "vi") -> None:
         self.busy = True

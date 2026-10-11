@@ -69,6 +69,9 @@ class ProtocolEncodingTest(unittest.TestCase):
         stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="cp1252", errors="surrogateescape")
         runtime = VoiceRuntime.__new__(VoiceRuntime)
         runtime.command_queue = queue.Queue()
+        runtime.stop_event = threading.Event()
+        runtime.lifecycle_lock = threading.Lock()
+        runtime.playback_cancelled = threading.Event()
         try:
             with patch("voice_sidecar.sys.stdin", stdin):
                 runtime.read_commands()
@@ -96,6 +99,8 @@ class LanguageRoutingTest(unittest.TestCase):
         runtime.busy = False
         runtime.stt = FakeSTT()
         runtime.pending = {}
+        runtime.stop_event = threading.Event()
+        runtime.lifecycle_lock = threading.Lock()
         runtime.listen_on_command = False
         with patch("voice_sidecar.emit"):
             runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
@@ -328,6 +333,7 @@ class ListenOnceTest(unittest.TestCase):
         runtime.audio_queue = queue.Queue(maxsize=400)
         runtime.command_queue = queue.Queue()
         runtime.stop_event = threading.Event()
+        runtime.lifecycle_lock = threading.Lock()
         runtime.pending = {}
         runtime.stt = FakeSTT()
 
@@ -356,10 +362,163 @@ class ListenOnceTest(unittest.TestCase):
             self.assertEqual(len(listening_states), 2)
 
 
+class ShutdownTranscriptionTest(unittest.TestCase):
+    def make_runtime(self) -> VoiceRuntime:
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.command_queue = queue.Queue()
+        runtime.audio_queue = queue.Queue()
+        runtime.stop_event = threading.Event()
+        runtime.lifecycle_lock = threading.Lock()
+        runtime.playback_cancelled = threading.Event()
+        runtime.pending = {}
+        runtime.busy = False
+        runtime.listen_on_command = False
+        return runtime
+
+    def test_shutdown_is_latched_before_command_reader_reaches_eof(self) -> None:
+        runtime = self.make_runtime()
+
+        def lines():
+            yield '{"type":"shutdown"}\n'
+            self.assertTrue(runtime.stop_event.is_set())
+            self.assertTrue(runtime.playback_cancelled.is_set())
+
+        with patch("voice_sidecar.sys.stdin", lines()):
+            runtime.read_commands()
+        self.assertTrue(runtime.stop_event.is_set())
+        self.assertTrue(runtime.playback_cancelled.is_set())
+        self.assertEqual(runtime.command_queue.get_nowait(), {"type": "shutdown"})
+
+    def test_pipe_eof_latches_shutdown_without_waiting_for_control_loop(self) -> None:
+        runtime = self.make_runtime()
+        with patch("voice_sidecar.sys.stdin", io.StringIO("")):
+            runtime.read_commands()
+        self.assertTrue(runtime.stop_event.is_set())
+        self.assertTrue(runtime.playback_cancelled.is_set())
+        self.assertEqual(runtime.command_queue.get_nowait(), {"type": "shutdown"})
+
+    def test_shutdown_before_decode_does_not_call_model_or_emit(self) -> None:
+        runtime = self.make_runtime()
+
+        class FakeSTT:
+            calls = 0
+
+            def transcribe(self, _audio, **_kwargs):
+                self.calls += 1
+                return [], None
+
+        runtime.stt = FakeSTT()
+        runtime.shutdown()
+        with patch("voice_sidecar.emit") as emitted:
+            runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
+        self.assertEqual(runtime.stt.calls, 0)
+        emitted.assert_not_called()
+        self.assertTrue(runtime.busy)
+
+    def test_shutdown_during_lazy_decode_does_not_publish_late_utterance(self) -> None:
+        runtime = self.make_runtime()
+
+        class FakeSTT:
+            def transcribe(self, _audio, **_kwargs):
+                def segments():
+                    yield types.SimpleNamespace(text="Xin chào")
+                    with patch("voice_sidecar.sys.stdin", io.StringIO('{"type":"shutdown"}\n')):
+                        runtime.read_commands()
+                    yield types.SimpleNamespace(text="open notepad")
+                return segments(), None
+
+        runtime.stt = FakeSTT()
+        events: list[tuple[str, dict[str, object]]] = []
+        with patch("voice_sidecar.emit", side_effect=lambda kind, **payload: events.append((kind, payload))):
+            runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
+        self.assertTrue(runtime.stop_event.is_set())
+        self.assertEqual(events, [("state", {"state": "thinking"})])
+        self.assertEqual(runtime.pending, {})
+        self.assertTrue(runtime.busy)
+
+    def test_shutdown_does_not_wait_for_active_model_call(self) -> None:
+        runtime = self.make_runtime()
+        entered = threading.Event()
+        release = threading.Event()
+        errors: list[BaseException] = []
+
+        class FakeSTT:
+            def transcribe(self, _audio, **_kwargs):
+                entered.set()
+                if not release.wait(timeout=2.0):
+                    raise RuntimeError("test model release timed out")
+                return [types.SimpleNamespace(text="open notepad")], None
+
+        runtime.stt = FakeSTT()
+
+        def decode():
+            try:
+                runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
+            except BaseException as exc:
+                errors.append(exc)
+
+        events: list[tuple[str, dict[str, object]]] = []
+        with patch("voice_sidecar.emit", side_effect=lambda kind, **payload: events.append((kind, payload))):
+            worker = threading.Thread(target=decode)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(timeout=1.0))
+                runtime.shutdown()
+                self.assertTrue(runtime.stop_event.is_set())
+                self.assertTrue(worker.is_alive())
+            finally:
+                release.set()
+                worker.join(timeout=2.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(events, [("state", {"state": "thinking"})])
+        self.assertEqual(runtime.pending, {})
+
+    def test_shutdown_before_publication_discards_completed_result(self) -> None:
+        runtime = self.make_runtime()
+
+        class FakeSTT:
+            def transcribe(self, _audio, **_kwargs):
+                return [types.SimpleNamespace(text="open notepad")], None
+
+        runtime.stt = FakeSTT()
+        events: list[tuple[str, dict[str, object]]] = []
+
+        def completed_at():
+            runtime.shutdown()
+            return 456
+
+        with (
+            patch("voice_sidecar.time.perf_counter_ns", side_effect=completed_at),
+            patch("voice_sidecar.emit", side_effect=lambda kind, **payload: events.append((kind, payload))),
+        ):
+            runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
+        self.assertEqual(events, [("state", {"state": "thinking"})])
+        self.assertEqual(runtime.pending, {})
+
+    def test_error_after_pipe_eof_does_not_publish_or_resume(self) -> None:
+        runtime = self.make_runtime()
+
+        class FakeSTT:
+            def transcribe(self, _audio, **_kwargs):
+                with patch("voice_sidecar.sys.stdin", io.StringIO("")):
+                    runtime.read_commands()
+                raise RuntimeError("decode interrupted")
+
+        runtime.stt = FakeSTT()
+        events: list[tuple[str, dict[str, object]]] = []
+        with patch("voice_sidecar.emit", side_effect=lambda kind, **payload: events.append((kind, payload))):
+            runtime.transcribe(bytes(FRAME_BYTES * 2), 123)
+        self.assertEqual(events, [("state", {"state": "thinking"})])
+        self.assertEqual(runtime.pending, {})
+        self.assertTrue(runtime.busy)
+
+
 class PlaybackControlTest(unittest.TestCase):
     def make_runtime(self) -> VoiceRuntime:
         runtime = VoiceRuntime.__new__(VoiceRuntime)
         runtime.stop_event = threading.Event()
+        runtime.lifecycle_lock = threading.Lock()
         runtime.speaker_queue = queue.Queue()
         runtime.playback_paused = threading.Event()
         runtime.playback_cancelled = threading.Event()
