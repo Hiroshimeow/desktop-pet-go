@@ -176,6 +176,9 @@ type App struct {
 	Dictation         dictationSession
 	DictationSerial   uint64
 	DictationDelivery dictationDelivery
+	Chat              petChat
+	Preview           petPreview
+	PetChatEnabled    bool
 	TimerID           uintptr
 	LastTick          time.Time
 }
@@ -206,6 +209,7 @@ func main() {
 	sayText := flag.String("say", "", "speak text once in Vietnamese or English")
 	readFile := flag.String("read-file", "", "read a local UTF-8 .txt or .md file")
 	readLang := flag.String("read-lang", "auto", "speech language: auto, vi, or en")
+	petChatEnabled := flag.Bool("pet-chat", true, "pet click opens text chat; pet mic uses local conversation")
 	dictationEnabled := flag.Bool("dictation", false, "enable local global dictation input on the resident voice sidecar")
 	dictationToggle := flag.String("dictation-toggle", "F5", "dictation toggle shortcut; Ctrl/Shift+function key or Ctrl+letter; empty disables")
 	dictationHold := flag.String("dictation-hold", "F6", "hold-to-talk shortcut; empty disables")
@@ -233,7 +237,7 @@ func main() {
 		fatalExit(1, "load runtime profile failed: %v", err)
 	}
 	hookTimeout := time.Duration(*hookTimeoutMS) * time.Millisecond
-	app = &App{Profile: profile, Inputs: make(chan InputEvent, 256), VoiceEvents: make(chan voiceEvent, 64), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand, HookTimeout: hookTimeout, HookSem: make(chan struct{}, 2), LastTick: time.Now()}
+	app = &App{PetChatEnabled: *petChatEnabled, Profile: profile, Inputs: make(chan InputEvent, 256), VoiceEvents: make(chan voiceEvent, 64), ScreenW: int(getSystemMetrics(0)), ScreenH: int(getSystemMetrics(1)), ClickCommand: *clickCommand, RightCommand: *rightCommand, HookTimeout: hookTimeout, HookSem: make(chan struct{}, 2), LastTick: time.Now()}
 	log.Printf("screen size=%dx%d selected_groups=%d", app.ScreenW, app.ScreenH, len(profile.ActivePets))
 	if *catalog {
 		if err := app.printCatalogOnly(profileBase, *assetsPath); err != nil {
@@ -248,6 +252,13 @@ func main() {
 		fatalExit(1, "start UI timer failed: %v", err)
 	}
 	defer app.stopVoice()
+	if *dictationEnabled {
+		app.Preview.status = "Local dictation starting…"
+	}
+	defer app.closePetUI()
+	if *petChatEnabled && !voiceRequested && !*dictationEnabled {
+		app.startVoiceController(false, nil)
+	}
 	if voiceRequested {
 		app.startVoiceAsync(*voiceEnabled, *commandMode, *sayText, *readFile, *readLang)
 	}
@@ -255,6 +266,7 @@ func main() {
 		keys, err := startDictationHotkeys(dictationBindings)
 		if err != nil {
 			log.Printf("dictation disabled: %v", err)
+			app.Preview.status = "Dictation shortcut unavailable; choose another binding."
 		} else {
 			app.DictationKeys = keys
 			defer keys.stop()
@@ -545,17 +557,15 @@ func (a *App) handleInputEvent(ev InputEvent) {
 		if p.Drag {
 			a.endDrag(p, "left_up")
 		} else if p.PendingLeft {
-			a.endPendingLeft(p, "left_up_click")
-			p.Pet.TriggerAction("left_click")
-			if a.Voice != nil {
-				a.Voice.armListenOnce()
-			}
-			a.runHook(a.ClickCommand)
+			a.finishPetClick(p, "left_up_click")
 		}
 	case InputLeftDouble:
 		log.Printf("double click hwnd=%d pet=%s; cancel pending/drag and play left_click", ev.HWND, p.Pet.InstanceID)
 		a.cancelLeftInput(p, "double_click")
 		p.Pet.TriggerAction("left_click")
+		if a.PetChatEnabled && (a.Voice == nil || !a.Voice.commandMode) {
+			a.showPetChat()
+		}
 		a.runHook(a.ClickCommand)
 	case InputRightDown:
 		log.Printf("right click hwnd=%d pet=%s", ev.HWND, p.Pet.InstanceID)
@@ -607,6 +617,7 @@ func (a *App) tick() {
 	a.processVoiceEvents()
 	a.processDictationInputs()
 	a.processDictationDelivery()
+	a.updatePetUI()
 	now := time.Now()
 	dt := now.Sub(a.LastTick).Seconds()
 	if dt <= 0 || dt > 0.05 {
@@ -625,7 +636,7 @@ func (a *App) tick() {
 		if wp.PendingLeft && !wp.Drag {
 			if !isLeftButtonDown() {
 				log.Printf("pending click release by button state hwnd=%d pet=%s", wp.HWND, wp.Pet.InstanceID)
-				a.endPendingLeft(wp, "button_state_left_up")
+				a.finishPetClick(wp, "button_state_left_up")
 				wp.Pet.Update(dt, a.ScreenW, wp.FrameW)
 				a.drawPet(wp)
 				continue
@@ -794,6 +805,20 @@ func (a *App) beginPendingLeft(wp *WindowPet, mx, my int32, reason string) {
 	wp.DownScreenY = pt.Y
 	wp.DownAt = time.Now()
 	log.Printf("pending left begin hwnd=%d pet=%s reason=%s offset=(%d,%d) screen=(%d,%d) pos=(%.0f,%.0f)", wp.HWND, wp.Pet.InstanceID, reason, mx, my, pt.X, pt.Y, wp.Pet.X, wp.Pet.Y)
+}
+
+func (a *App) finishPetClick(wp *WindowPet, reason string) {
+	if wp == nil || !wp.PendingLeft {
+		return
+	}
+	a.endPendingLeft(wp, reason)
+	wp.Pet.TriggerAction("left_click")
+	if a.Voice != nil && a.Voice.commandMode {
+		a.Voice.armListenOnce()
+	} else if a.PetChatEnabled {
+		a.showPetChat()
+	}
+	a.runHook(a.ClickCommand)
 }
 
 func (a *App) endPendingLeft(wp *WindowPet, reason string) {

@@ -487,6 +487,7 @@ type dictationSession struct {
 	seq                      uint64
 	recording, cancelled     bool
 	hold                     bool
+	conversation             bool
 	startedAt                time.Time
 	target                   dictationFocus
 	stable, unstable, result string
@@ -495,19 +496,25 @@ type dictationSession struct {
 
 func (a *App) processDictationInputs() {
 	h := a.DictationKeys
-	if h == nil {
-		return
-	}
 	if a.Voice == nil || a.Voice.isStopped() {
-		h.ready.Store(false)
+		if h != nil {
+			h.ready.Store(false)
+		}
 		if a.Dictation.sessionID != "" {
 			a.cancelDictationDelivery()
 			a.Dictation = dictationSession{}
-			h.finish()
+			a.Preview.status = "Local voice stopped — recording discarded."
+			a.Preview.stable, a.Preview.unstable = "", ""
+			if h != nil {
+				h.finish()
+			}
 		}
 		return
 	}
-	ready := a.DictationDelivery.text == "" && a.Voice.ready && !a.Voice.listen && !a.Voice.commandMode && a.Voice.activeTurn == "" && len(a.Voice.queue) == 0
+	if h == nil {
+		return
+	}
+	ready := !a.Chat.busy && a.Dictation.sessionID == "" && a.DictationDelivery.text == "" && a.Voice.ready && !a.Voice.listen && !a.Voice.commandMode && a.Voice.activeTurn == "" && len(a.Voice.queue) == 0
 	h.ready.Store(ready && !h.overflow.Load())
 	if h.overflow.Swap(false) {
 		// A lost release/cancel cannot leave capture active. Retire the bounded
@@ -552,7 +559,7 @@ func (a *App) handleDictationInput(in dictationInput) {
 		if a.Dictation.sessionID != "" {
 			return
 		}
-		if a.DictationDelivery.text != "" || !v.ready || v.listen || v.commandMode || v.activeTurn != "" || len(v.queue) != 0 {
+		if a.Chat.busy || a.DictationDelivery.text != "" || !v.ready || v.listen || v.commandMode || v.activeTurn != "" || len(v.queue) != 0 {
 			if a.DictationKeys != nil {
 				a.DictationKeys.finish()
 			}
@@ -561,12 +568,16 @@ func (a *App) handleDictationInput(in dictationInput) {
 		a.Dictation = dictationSession{sessionID: fmt.Sprintf("dict-%d-%d", time.Now().UnixNano(), a.DictationSerial), recording: true, target: in.target, hold: in.hold, startedAt: in.at}
 		a.DictationSerial++
 		a.beginDictationDelivery(in.target)
+		a.Preview.stable, a.Preview.unstable = "", ""
+		a.Preview.status = "Dictation — recording. Stop shortcut to finish; Esc to discard."
+		pGetCursorPos.Call(uintptr(unsafe.Pointer(&a.Preview.point)))
 		kind = "dictation_start"
 	case dictationStop:
 		if a.Dictation.sessionID == "" || !a.Dictation.recording {
 			return
 		}
 		a.Dictation.recording = false
+		a.Preview.status = "Transcribing locally…"
 		kind = "dictation_stop"
 		if a.Dictation.hold && !a.Dictation.startedAt.IsZero() && in.at.Sub(a.Dictation.startedAt) < 250*time.Millisecond {
 			kind = "dictation_cancel"
@@ -578,6 +589,8 @@ func (a *App) handleDictationInput(in dictationInput) {
 			return
 		}
 		a.Dictation.cancelled = true
+		a.Preview.status = "Cancelling — no text inserted."
+		a.Preview.stable, a.Preview.unstable = "", ""
 		a.cancelDictationDelivery()
 		a.Dictation.recording = false
 		kind = "dictation_cancel"
@@ -603,10 +616,16 @@ func (a *App) handleDictationEvent(ev voiceEvent) bool {
 	}
 	d.seq = ev.Seq
 	switch ev.Type {
+	case "record_started", "speech_start":
+		// UI was prepared before capture without changing focus.
+	case "record_stopped":
+		d.recording = false // Includes the sidecar's bounded duration limit.
+		a.Preview.status = "Transcribing locally…"
 	case "partial":
-		if !d.cancelled {
+		if !d.cancelled && !d.failed {
 			d.stable = ev.Stable
 			d.unstable = ev.Unstable
+			a.Preview.stable, a.Preview.unstable = ev.Stable, ev.Unstable
 		}
 	case "final":
 		if d.finalSeen || d.recording {
@@ -618,16 +637,33 @@ func (a *App) handleDictationEvent(ev voiceEvent) bool {
 		}
 	case "cancelled", "error":
 		d.failed = true
+		a.Preview.stable, a.Preview.unstable = "", ""
+		a.Preview.status = "Cancelled — no text inserted."
+		if ev.Type == "error" {
+			a.Preview.status = "Local recording failed (" + ev.Code + ") — no text inserted."
+		}
 		a.cancelDictationDelivery()
 		if ev.Type == "error" {
 			log.Printf("dictation error code=%s", ev.Code)
 		}
 	case "done":
 		if !d.cancelled && !d.failed && !d.recording && d.finalSeen && d.result != "" && ev.Outcome == "final" {
-			a.finishDictationDelivery(d.result)
+			if d.conversation {
+				text := d.result
+				a.Dictation = dictationSession{}
+				a.submitPetChat(text, true)
+				a.Preview.status = "Voice conversation — waiting for agent."
+			} else {
+				a.finishDictationDelivery(d.result)
+				a.Preview.status = "Delivering final to original target…"
+			}
 		} else {
 			a.cancelDictationDelivery()
+			if !d.failed && !d.cancelled {
+				a.Preview.status = "No speech — no text inserted."
+			}
 		}
+		a.Preview.stable, a.Preview.unstable = "", ""
 		a.Dictation = dictationSession{}
 		if a.DictationKeys != nil {
 			a.DictationKeys.finish()

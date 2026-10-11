@@ -502,7 +502,7 @@ func (v *VoiceController) stop() {
 }
 
 func (a *App) processVoiceEvents() {
-	for {
+	for i := 0; i < 64; i++ {
 		select {
 		case event := <-a.VoiceEvents:
 			a.handleVoiceEvent(event)
@@ -513,6 +513,9 @@ func (a *App) processVoiceEvents() {
 }
 
 func (a *App) handleVoiceEvent(event voiceEvent) {
+	if a.handlePetChatEvent(event) {
+		return
+	}
 	if a.handleDictationEvent(event) {
 		return
 	}
@@ -526,6 +529,9 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 		case "ready":
 			log.Printf("voice ready")
 			a.Voice.ready = true
+			if a.Preview.status == "Local dictation starting…" {
+				a.Preview.status = "Local dictation ready — toggle or hold your configured shortcut."
+			}
 			a.Voice.dispatchNext()
 		case "listening":
 			a.triggerVoiceIntent(petbrain.IntentVoiceListening)
@@ -535,10 +541,11 @@ func (a *App) handleVoiceEvent(event voiceEvent) {
 			a.triggerVoiceIntent(petbrain.IntentVoiceSpeaking)
 		case "error":
 			log.Printf("voice error: %s", event.Detail)
+			a.Preview.status = "Local voice unavailable — pet and text chat remain usable."
 			a.triggerVoiceIntent(petbrain.IntentVoiceError)
 		}
 	case "utterance":
-		log.Printf("voice transcript turn=%s text=%q", event.TurnID, event.Text)
+		log.Printf("voice transcript received turn=%s", event.TurnID)
 		if a.Voice.commandMode {
 			command, ok := voice.ParseCommand(event.Text)
 			if !ok {

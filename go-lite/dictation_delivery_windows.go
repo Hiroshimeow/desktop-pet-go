@@ -120,19 +120,10 @@ func (a *App) processDictationDelivery() {
 	}
 }
 func (a *App) showDictationNotice(reason string) {
-	if len(a.Pets) == 0 {
-		return
-	} // A headless controller has no owner-visible UI.
-	if a.DictationDelivery.notice != 0 {
-		pDestroyWindow.Call(a.DictationDelivery.notice)
-		a.DictationDelivery.notice = 0
-	}
-	class, _ := syscall.UTF16PtrFromString("STATIC")
-	label, _ := syscall.UTF16PtrFromString("Dictation: " + reason)
-	// WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW; passive status,
-	// not a modal dialog that could steal the very target being protected.
-	hwnd, _, _ := pCreateWindowExW.Call(0x08000088, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(label)), 0x90000100, 20, 20, 560, 70, 0, 0, 0, 0)
-	a.DictationDelivery.notice = hwnd
+	// Reuse the same nonactivating live panel for completion/failure; do not
+	// create a second notification window over the original target.
+	a.Preview.status = reason
+	a.Preview.stable, a.Preview.unstable = "", ""
 }
 func (a *App) discardDictationFinal() {
 	a.cancelDictationDelivery()
