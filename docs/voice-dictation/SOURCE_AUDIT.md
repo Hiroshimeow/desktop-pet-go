@@ -9,8 +9,8 @@ GitHub REST repository metadata + default-branch commit, then SHA-specific codel
 | Repository | Pinned source SHA | Latest release observed | GitHub license metadata |
 |---|---|---|---|
 | Starmel/OpenSuperWhisper | `c8e6fe79d6851078940f459ab7dbc8ee39e2a97d` | `0.1.0` | MIT |
-| cjpais/Handy | default `48a3d8e9ee456c1c6a3b7223779271c457890b4d`; release `14f6f0d31cb22a4268acfbddba3052820fd0a06e` | `v0.9.8` | MIT metadata, full notice review pending |
-| OpenWhispr/openwhispr | `5f9a88b0481a066c147bfd2c38ea1d9acae502ee` | `v1.10.2` | MIT |
+| cjpais/Handy | default `48a3d8e9ee456c1c6a3b7223779271c457890b4d`; release `14f6f0d31cb22a4268acfbddba3052820fd0a06e` | `v0.9.8` | full released MIT read, ©2025 CJ Pais |
+| OpenWhispr/openwhispr | default `5f9a88b0481a066c147bfd2c38ea1d9acae502ee` (package1.10.3); release `1c123e8739f87c0a72d0b252bc9cff14e684b7f4` | `v1.10.2` | full released MIT read, ©2024 OpenWhispr Team |
 | alpacarodeo/OpenSuperWhisper-Windows | `b4ca5086c38ad4fead69e0232a7404b33bb742a9` | `v1.0.0` | MIT |
 | drajb/whisper-local | `8e25b0937eeefb25c8d81fe56d3a26528c08eacc` | `v0.21.0` | MIT |
 | local-live-caption-engine (existing local repository) | `45e64e47a21c8058ecbc3a879aa9c3c6f9c0399c` | not inspected | Actual LICENSE read: MIT, copyright 2026 Hiroshimeow |
@@ -40,7 +40,15 @@ Paths below are relative to pinned OSW source. Claims come from actual source, n
 
 Subsequent G03 review mapped permission/monitor edge cases, FluidAudio adapter, settings/UI/menu/file-drop, model downloads, postprocessing, storage errors, native API/VAD defaults and specialized test assertions; full source map and explicit gaps are in REFERENCE_MATRIX.md. Native macOS tests NOT RUN on this Windows host (xcodebuild unavailable); source coverage is not runtime acceptance. Fluid adapter has no VI support in its UI and no wired stored transcriptionTask despite cancellation method; do not infer interruptibility.
 
-## Handy: verified capabilities and limitations so far
+## G04 released-source/runtime checkpoint — 2026-10-11 ~18:40 JST
+
+**Read G04_RELEASE_AUDIT.md for current release-specific findings**, not the preliminary default-branch notes below. Released Handy0.9.8 uses public transcribe.cpp **0.2.4**, not earlier0.3.1/internal supervisor API. Exact release/native crate pins/licenses checked; installed public DLL0.2.4 strictCPU stream/abort/reset probe runs; model OpenMDW1.1 license pending. Handy start→actual mic callback→cancel twice, state/assets/foreground/clipboard unchanged; final/paste/hold/live GUI not tested.
+
+Released OpenWhispr1.10.2 `1c123e8…` exposes authenticated localhost **batch local-file transcription** bridge, but no external live mic/session protocol. Actual shipped artifact SHA matched GitHub,7 key packaged JS paths source-equivalent after newline normalization. Released helper capabilities/detection and invalid HWND fail-open limit reproduced without paste. Full Electron app not launched (startup registration/cloud defaults), external HTTP→ASR not runtime proven. Target/API pure suites13 PASS and stream parser11 PASS; clipboard suite fails Windows fake-Electron initialization, not patched/claimed PASS.
+
+G04 still DOING: full controlled reference final/paste/hold/live and candidate/license edge coverage remain. No G05 architecture selection, no G06 human VI accuracy/G07 live/G10 insertion acceptance. Native reuse probe source checked into docs/probes for reproducibility only, struct-derived MIT notice retained; no product implementation/DLL/model/audio/private outputs committed.
+
+## Handy: preliminary default-branch capabilities (not release substitute)
 
 Pinned-source files read: `src-tauri/src/cli.rs`, `main.rs`, `actions.rs`, `shortcut/handler.rs`, `transcription_coordinator.rs` (including all tests), `paste_tx/windows.rs`, `engine_supervisor/{protocol,worker}.rs`, `portable.rs`; targeted portions of `managers/transcription.rs` and `lib.rs`. Full capture, supervisor, clipboard and history review still pending.
 
@@ -53,7 +61,7 @@ Pinned-source files read: `src-tauri/src/cli.rs`, `main.rs`, `actions.rs`, `shor
 
 ## OpenWhispr material safety finding
 
-`resources/windows-fast-paste.c` read fully at pinned SHA. Captures HWND via `--detect-only`, can restore window via AttachThreadInput/SetForegroundWindow and detect terminals by class/exe for Ctrl+Shift+V. **If restore fails, it intentionally pastes into whichever window is foreground. This violates Desktop Pet A04 and must not be ported.** No original edit/caret/secure/integrity verification in this helper. Per-paste process spawning is not the desired runtime architecture. Broader local streaming/clipboard/hotkey JS review pending.
+`resources/windows-fast-paste.c` read fully at pinned SHA. Captures HWND via `--detect-only`, can restore window via AttachThreadInput/SetForegroundWindow and detect terminals by class/exe for Ctrl+Shift+V. **If restore fails, it intentionally pastes into whichever window is foreground. This violates Desktop Pet A04 and must not be ported.** No original edit/caret/secure/integrity verification in this helper. Per-paste process spawning is not the desired runtime architecture. Subsequent exact-release bridge/stream/clipboard mapping and actual helper limit are in G04_RELEASE_AUDIT.md; broader keyboard/UIA/full app runtime still pending.
 
 ## local-live-caption-engine donor assessment
 

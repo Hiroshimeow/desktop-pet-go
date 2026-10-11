@@ -54,8 +54,51 @@ Additional actual-code probes from canonical Python (exit 0):
 
 These expose missing invariant coverage despite its green suite. Do not copy stabilizer/stitcher unchanged into dictation or claim proven VI accuracy. Segmenter pre-roll/current-frame-once and scheduler latest-partial replacement remain useful candidate techniques.
 
+## G04 released controls/native mechanisms — 2026-10-11 ~18:25–18:40 JST
+
+These are bounded API/capture probes, **not G06/G07/G10 acceptance**. Revisions/licenses/limits in G04_RELEASE_AUDIT.md.
+
+### Handy existing instance: start → actual callback → cancel
+
+Verified idle Recording overlay hidden before test; existing Handy29968 preserved, no process takeover. Two iterations of `handy.exe --toggle-transcription` then `handy.exe --cancel`, each child timeout10s; bounded log-condition waits8s ready/5s cancel, not production polling. No stop/final decode/paste/LLM. Actual mic callbacks can include ambient audio in RAM; cancel discards it, no recordings/history files created or sent.
+
+| Trial | Toggle child ms / exit | Observed ready ms from command start | Cancel child ms / exit | Native log evidence |
+|---|---|---:|---|---|
+| 1 |79.8 /0 |214.1 |139.2 /0 |start completed117.634ms; real mic ready; cancellation completed |
+| 2 |88.2 /0 |235.2 |138.9 /0 |start completed91.088ms; real mic ready; cancellation completed |
+
+Both stdout/stderr empty: CLI has no runtime result/live acknowledgement. Readiness observed through existing debug log, not public protocol. Small samples, polling/scheduler overhead; no p95/product latency claim. Overlay visible at readiness; still visible when cancellation log first arrived (async hide), later hidden verified. Foreground HWND unchanged; clipboard sequence unchanged2047; settings SHA unchanged; history row count5 unchanged, existing6 recording files unchanged. No transcript/log contents copied except own technical probe markers. Settings remain user WhisperMedium/Auto, so GUI inference CPU policy/live Nemotron not measured.
+
+### Shipped native public C API (not hidden worker)
+
+Handy DLL `transcribe_version=0.2.4`, runtime commit `unknown`, SHA256 `765e4723dba20404b7ac7108998249599539cbd4ce93f2245b4ec6b2ff6a9a2a`. Matching crate0.2.4 checksums verified against released Cargo.lock. Research probe uses exact public C API, rejects wrong version/ABI layout, serial model/session owner, strictCPU backend, copies borrowed UTF-8. Backend loader enumerates Intel Vulkan but model explicitly logs/returns **CPU strict**; no Vulkan inference in probe.
+
+One synthetic2.784s WAV repeated4 times with400ms zeros between →12.736s PCM; not independent/human corpus. Feed500ms audio blocks as fast as API returns (not real-time microphone replay). Successful initial probe: load1266.217ms; **8 changed live snapshots before finalize**, input cursors1500/2500/4500/6000/8000/9000/11500/12500ms, monotonic revisions1–8/committed prefix. Nonempty tentative never observed. Feed calls producing changes296.515–438.700ms, finalize295.443ms. One fast-fed run cannot establish release-to-final/real-time latency.
+
+Final raw/committed matched, tentative empty; **VI ending badly misrecognized** versus prior batch—does not pass accuracy. No preview seam mismatch in this fixture; source API warns divergence possible, not globally proven invariant. Already-set abort flag returned13/FAILED/was_aborted in0.0618ms; **not** in-flight encoder cancellation latency. Reset clears all text/state, next silence stream finalized empty. Session/model freed in finally, child exit0.
+
+First temporary attempt exited1 due Python cp1252 console UTF-8 print (after successful stream/final, teardown ran); rerun with `-X utf8` passed. Committed reproducibility script `probes/transcribe_release_probe.py` avoids transcript stdout; output JSON stays private/temp, retains upstream struct license notice. First reproducibility rerun exit0 produced same8 updates and silence/abort success; its initial load timing incorrectly included hashing (2413.89ms) and is **not used**. Timer corrected before final rerun: exit0, load **1756.996ms**, finalize **424.929ms**,8 updates, abort13/FAILED in0.0908ms, next silence empty,0 observed seam mismatches. These isolated API timings remain non-acceptance spikes. No audio/model/DLL/private JSON committed.
+
+Reproduce with existing local paths (output must be a **new** private file), launch using Python subprocess `timeout=120`:
+
+```
+cd voice-sidecar
+uv run --no-sync python -X utf8 ../docs/voice-dictation/probes/transcribe_release_probe.py --dll-dir <existing Handy directory> --model <existing pinned Nemotron GGUF> --audio <short synthetic 16kHz mono PCM16 WAV> --output <new private temp JSON>
+```
+
+### OpenWhispr released artifact/native helper
+
+No installed/running app found in standard local/roaming/program directories. Downloaded portable v1.10.2 archive, verified GitHub SHA256/size, extracted with existing7-Zip without executing installer/Electron app. Packaged version1.10.2; seven relevant JS files equal exact released commit `1c123e8739f87c0a72d0b252bc9cff14e684b7f4` after CRLF normalization. No registration, cloud defaults, full app or external HTTP native decode run.
+
+Actual shipped `windows-fast-paste.exe` SHA256 `bf400c7ca860e55df9c16692cca79d4be26232c353af055025f7cc606cdac046`:
+- `--capabilities` exit0: `paste-v1 selection-copy-v1 target-identity-v1 focus-restore-v1`.
+- `--detect-only` exit0: reports current foreground HWND/class/exe and terminal=false.
+- `--restore-window 1 --detect-only` exit0: invalid HWND still reports current foreground, confirms released **fail-open** fallback described by C source. No copy/paste/chord injected; clipboard sequence/foreground unchanged for all probes.
+
+Deterministic released source `node --test <release>/test/helpers/{cliBridgeTranscribe,windowsPasteTarget}.test.js`: exit0, **13 PASS**,135.4741ms; fake model/path/handle tests, no native ASR/paste. `parakeetWsResult.test.js`: exit0, **11 PASS**,123.5742ms, real parser/pure fixture messages. Combined run including clipboardRestore initially exit1:13pass/1 suite failure. ClipboardRestore alone reproducibly exit1 at debugLogger119 `app.isPackaged`; test's Electron fake supplies clipboard/systemPreferences but omits app, non-Windows short-circuit hid it. Upstream unchanged; no suite PASS claimed. Final combined rerun of only API/target/parser suites: **24 PASS/0 fail/0 skip**,229.3142ms. Node22.22.2. No product regression caused by this upstream harness failure.
+
 ## Microphone/GUI status
 
-`uv run --no-sync python voice_sidecar.py --list-devices`: exit 0; native Intel microphone array available (MME, DirectSound, WASAPI), default MME input index 1, speakers default index 3. Enumeration is **not capture/recognition evidence**. Real Handy toggle/paste, pet click/drag/voice/TTS, dictation target tests, focus/elevation/clipboard races, release-to-final percentiles and human VI/EN corpus still pending.
+`uv run --no-sync python voice_sidecar.py --list-devices`: exit 0; native Intel microphone array available (MME, DirectSound, WASAPI), default MME input index 1, speakers default index 3. Enumeration is **not capture/recognition evidence**. Subsequent G04 Handy toggle→real-callback→cancel is verified above; **stop/final/paste/live GUI/hold remains pending**. Pet click/drag/voice/TTS, dictation target tests, focus/elevation/clipboard races, release-to-final percentiles and human VI/EN corpus still pending.
 
 Optional LAN GPU/cloud experiments not run or authorized; no cloud audio upload. Installed Handy Auto device defaults are not adopted as Desktop Pet CPU policy.
