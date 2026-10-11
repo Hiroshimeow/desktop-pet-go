@@ -17,14 +17,20 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import onnxruntime as ort
 import sounddevice as sd
 import webrtcvad
 from faster_whisper import WhisperModel
-from huggingface_hub import snapshot_download
+from huggingface_hub import constants as hub_constants, snapshot_download
+from huggingface_hub.utils import reset_sessions
 from piper import PiperVoice
+from piper.config import PiperConfig
 
 from dictation import DictationStream
 
+# CTranslate2 documents four CPU threads as its default. Make that budget
+# explicit so inherited OMP_NUM_THREADS cannot consume every core on the pet.
+STT_CPU_THREADS = max(1, min(4, os.cpu_count() or 1))
 SAMPLE_RATE = 16_000
 FRAME_MS = 30
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000
@@ -74,6 +80,37 @@ def tts_asset_paths(lang: str) -> tuple[Path, Path]:
     if lang == "en":
         return EN_TTS_MODEL, EN_TTS_CONFIG
     raise ValueError(f"unsupported speech language {lang!r}; use 'vi' or 'en'")
+
+
+def enforce_local_runtime() -> None:
+    """No model fetching/telemetry at runtime; downloads belong to --setup.
+
+    Hub constants are sampled at import and HTTP sessions are cached. Set both
+    and retire cached sessions, including when called by an embedding process.
+    Lazy TTS dependencies inherit the same offline environment.
+    """
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    hub_constants.HF_HUB_OFFLINE = True
+    hub_constants.HF_HUB_DISABLE_TELEMETRY = True
+    reset_sessions()
+
+
+def load_local_piper(model: Path, config: Path) -> PiperVoice:
+    # Piper 1.5.0's public load method uses an unrestricted default ORT pool.
+    # Construct its public voice/session objects with the same model/config,
+    # but a bounded CPU pool that sleeps instead of spinning while idle.
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = STT_CPU_THREADS
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    return PiperVoice(
+        session=ort.InferenceSession(str(model), sess_options=options, providers=["CPUExecutionProvider"]),
+        config=PiperConfig.from_dict(json.loads(config.read_text(encoding="utf-8"))),
+    )
 
 
 def load_japanese_kokoro() -> Any:
@@ -170,7 +207,16 @@ class JsonlWriter:
                     stream.write(line + "\n")
                     stream.flush()
                 except Exception:
-                    pass
+                    # The consumer is gone; silently dropping final/done while
+                    # capture continues would leave an ambiguous audio owner.
+                    with self.cond:
+                        self.closed = True
+                        self.queue.clear()
+                        self.partial_map.clear()
+                        self.flushing = False
+                        self.cond.notify_all()
+                    self.fatal()
+                    return
             if batch:
                 with self.cond:
                     self.flushing = False
@@ -390,12 +436,13 @@ def setup_assets() -> None:
         str(STT_DIR),
         device="cpu",
         compute_type="int8",
-        cpu_threads=0,
+        cpu_threads=STT_CPU_THREADS,
+        num_workers=1,
         local_files_only=True,
     )
     for lang, sample in (("vi", "Xin chào, kiểm tra giọng nói."), ("en", "Hello, voice check.")):
         model, config = tts_asset_paths(lang)
-        voice = PiperVoice.load(model, config)
+        voice = load_local_piper(model, config)
         chunks = list(voice.synthesize(sample))
         if not chunks or sum(len(chunk.audio_float_array) for chunk in chunks) == 0:
             raise RuntimeError(f"Piper {lang} self-check produced no audio")
@@ -412,15 +459,17 @@ def setup_assets() -> None:
 
 class VoiceRuntime:
     def __init__(self, *, listen_enabled: bool = True, listen_on_command: bool = False) -> None:
+        enforce_local_runtime()
         verify_assets()
         self.stt = WhisperModel(
             str(STT_DIR),
             device="cpu",
             compute_type="int8",
-            cpu_threads=0,
+            cpu_threads=STT_CPU_THREADS,
+            num_workers=1,
             local_files_only=True,
         )
-        self.tts: dict[str, Any] = {"vi": PiperVoice.load(TTS_MODEL, TTS_CONFIG)}
+        self.tts: dict[str, Any] = {"vi": load_local_piper(TTS_MODEL, TTS_CONFIG)}
         self.kokoro: Any = None
         self.listen_enabled = listen_enabled
         self.listen_on_command = listen_on_command
@@ -621,7 +670,7 @@ class VoiceRuntime:
         model, config = tts_asset_paths(lang)
         voice = self.tts.get(lang)
         if voice is None:
-            voice = PiperVoice.load(model, config)
+            voice = load_local_piper(model, config)
             self.tts[lang] = voice
         return voice
 

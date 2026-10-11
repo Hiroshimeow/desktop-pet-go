@@ -2,6 +2,7 @@ import io
 import json
 import os
 import queue
+import subprocess
 import sys
 import tempfile
 import threading
@@ -82,6 +83,85 @@ class ProtocolEncodingTest(unittest.TestCase):
         self.assertEqual(command["text"], "Mèo ơi, mình ở nhà nhé.")
 
 
+class RuntimePrivacyTest(unittest.TestCase):
+    def test_runtime_forces_offline_hub_even_when_environment_disables_it(self):
+        from huggingface_hub import constants, get_session
+        from huggingface_hub.utils import OfflineModeIsEnabled, reset_sessions
+
+        with (
+            patch.dict(os.environ, {"HF_HUB_OFFLINE": "0", "HF_HUB_DISABLE_TELEMETRY": "0"}),
+            patch.object(constants, "HF_HUB_OFFLINE", False),
+            patch.object(constants, "HF_HUB_DISABLE_TELEMETRY", False),
+            patch("voice_sidecar.verify_assets", side_effect=RuntimeError("missing local asset")),
+        ):
+            reset_sessions()
+            get_session()  # A previously cached online session must also be retired.
+            with self.assertRaisesRegex(RuntimeError, "missing local asset"):
+                VoiceRuntime(listen_enabled=False)
+            self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
+            self.assertTrue(constants.HF_HUB_DISABLE_TELEMETRY)
+            with self.assertRaises(OfflineModeIsEnabled):
+                get_session().get("https://huggingface.co/local-only-test")
+        reset_sessions()
+
+    def test_setup_is_explicit_and_does_not_apply_runtime_offline_policy(self):
+        import voice_sidecar
+        with (
+            patch("voice_sidecar.sys.argv", ["voice_sidecar.py", "--setup"]),
+            patch("voice_sidecar.setup_assets") as setup,
+            patch("voice_sidecar.enforce_local_runtime") as offline,
+            patch("voice_sidecar.VoiceRuntime") as runtime,
+        ):
+            self.assertEqual(voice_sidecar.main(), 0)
+        setup.assert_called_once_with()
+        offline.assert_not_called()
+        runtime.assert_not_called()
+
+    def test_default_whisper_uses_explicit_cpu_thread_and_worker_limits(self):
+        fake_dictation = types.SimpleNamespace()
+        with (
+            patch("voice_sidecar.verify_assets"),
+            patch("voice_sidecar.WhisperModel") as model,
+            patch("voice_sidecar.load_local_piper"),
+            patch("voice_sidecar.DictationStream", return_value=fake_dictation),
+            tempfile.TemporaryDirectory() as directory,
+            patch("voice_sidecar.LOG_DIR", Path(directory)),
+            patch.dict(os.environ, {"OMP_NUM_THREADS": "512"}),
+        ):
+            VoiceRuntime(listen_enabled=False)
+        kwargs = model.call_args.kwargs
+        self.assertEqual(kwargs["device"], "cpu")
+        self.assertEqual(kwargs["compute_type"], "int8")
+        self.assertTrue(kwargs["local_files_only"])
+        self.assertGreater(kwargs["cpu_threads"], 0)
+        self.assertLessEqual(kwargs["cpu_threads"], 4)
+        self.assertEqual(kwargs.get("num_workers"), 1)
+
+
+class PiperResourceTest(unittest.TestCase):
+    def test_local_piper_session_uses_bounded_cpu_without_spinning(self):
+        import onnxruntime as ort
+        import voice_sidecar
+        config = {"num_symbols": 1, "num_speakers": 1,
+                  "audio": {"sample_rate": 22050}, "espeak": {"voice": "vi"},
+                  "phoneme_id_map": {"a": [1]}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "voice.onnx.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with patch("onnxruntime.InferenceSession") as session:
+                loader = getattr(voice_sidecar, "load_local_piper", voice_sidecar.PiperVoice.load)
+                voice = loader(Path(directory) / "voice.onnx", path)
+        options = session.call_args.kwargs["sess_options"]
+        self.assertEqual(session.call_args.kwargs["providers"], ["CPUExecutionProvider"])
+        self.assertGreater(options.intra_op_num_threads, 0)
+        self.assertLessEqual(options.intra_op_num_threads, 4)
+        self.assertEqual(options.inter_op_num_threads, 1)
+        self.assertEqual(options.execution_mode, ort.ExecutionMode.ORT_SEQUENTIAL)
+        self.assertEqual(options.get_session_config_entry("session.intra_op.allow_spinning"), "0")
+        self.assertEqual(options.get_session_config_entry("session.inter_op.allow_spinning"), "0")
+        self.assertEqual(voice.config.espeak_voice, "vi")
+
+
 class BoundedJobsTest(unittest.TestCase):
     def test_command_backlog_does_not_block_shutdown_reader(self):
         runtime = VoiceRuntime.__new__(VoiceRuntime)
@@ -112,6 +192,47 @@ class BoundedJobsTest(unittest.TestCase):
 
 
 class WriterBackpressureTest(unittest.TestCase):
+    def test_broken_stdout_retires_audio_owner_instead_of_silently_losing_final(self):
+        from voice_sidecar import JsonlWriter
+        retired = threading.Event()
+
+        class BrokenPipe:
+            def write(self, text):
+                raise BrokenPipeError("reader exited")
+            def flush(self):
+                pass
+
+        writer = JsonlWriter()
+        writer.fatal = retired.set
+        try:
+            with patch("voice_sidecar.sys.stdout", BrokenPipe()):
+                writer.emit("final", session_id="lost-owner", text="must not vanish silently")
+            self.assertTrue(retired.wait(.2), "broken protocol pipe left the audio owner running")
+            self.assertTrue(writer.closed)
+        finally:
+            writer.shutdown()
+
+    def test_broken_stdout_exits_real_sidecar_process(self):
+        code = """
+import sys, threading
+from voice_sidecar import JSONL_WRITER
+sys.stdout.close()
+JSONL_WRITER.emit('final', session_id='closed-consumer', text='synthetic')
+threading.Event().wait(5)
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-c", code], cwd=Path(__file__).resolve().parent,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            self.assertEqual(process.wait(timeout=8), 71)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=3)
+            process.stdout.close()
+            process.stderr.close()
+
     def test_terminal_backlog_is_bounded_and_fails_closed(self):
         from voice_sidecar import JsonlWriter
         entered = threading.Event()

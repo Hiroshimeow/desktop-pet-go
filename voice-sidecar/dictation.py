@@ -18,6 +18,9 @@ SAMPLE_RATE = 16_000
 FRAME_SAMPLES = 480
 PARTIAL_SAMPLES = SAMPLE_RATE * 1200 // 1000
 MAX_RECORD_SECONDS = 120
+# Keep replay protection for the entire resident lifetime, without an unbounded
+# set or evicting IDs that could accidentally reactivate an old session.
+MAX_SESSION_IDS = 4096
 MUTABLE_TAIL_SECONDS = 0.5
 TIMESTAMP_TOLERANCE = 0.35
 HOLDBACK_WORDS = 2
@@ -187,6 +190,11 @@ class DictationStream:
             if not session_id or len(session_id) > 128 or session_id in self.seen_ids or self.active or self.closed or self.stop_event.is_set():
                 return False
             self.session_id = session_id
+            if len(self.seen_ids) >= MAX_SESSION_IDS:
+                self.seq = 0
+                self._emit("error", code="session_limit", reason="Local voice session limit reached; restart local voice. No text inserted")
+                self._emit("done", outcome="error")
+                return True  # Accepted envelope, terminal failure; no capture.
             self.seen_ids.add(session_id)
             self.phase = "recording"
             self.pcm = bytearray()

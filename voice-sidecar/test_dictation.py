@@ -467,6 +467,25 @@ class StreamingTest(unittest.TestCase):
         self.assertEqual(len(calls), 40)
         self.assertTrue(all(s.closed for s in self.streams))
 
+    def test_replay_guard_is_bounded_without_forgetting_old_session_ids(self):
+        engine = self.make_engine(types.SimpleNamespace(transcribe=lambda *a, **kw: result("unused")))
+        with patch.object(dictation, "MAX_SESSION_IDS", 3, create=True):
+            for index in range(4):
+                sid = f"bounded-{index}"
+                before = len(self.events)
+                self.assertTrue(engine.start(sid))
+                engine.cancel(sid)
+                with self.changed:
+                    self.assertTrue(self.changed.wait_for(
+                        lambda: any(e["type"] == "done" and e["session_id"] == sid for e in self.events[before:]), 3))
+            self.assertLessEqual(len(engine.seen_ids), 3)
+            self.assertEqual(len(self.streams), 3, "capture opened after replay guard exhausted")
+            self.assertFalse(engine.start("bounded-0"), "old replay ID was forgotten")
+            rejected = [e for e in self.events if e["session_id"] == "bounded-3"]
+            self.assertEqual([e["type"] for e in rejected], ["error", "done"])
+            self.assertEqual(rejected[0]["code"], "session_limit")
+            self.assertFalse(engine.active)
+
     def test_shutdown_fences_inflight_final(self):
         entered = threading.Event()
         release = threading.Event()
