@@ -1,6 +1,6 @@
 # Desktop Pet: Local-First Dictation & Live Transcript — Specification
 
-Status: **PROPOSED**, Phase 1 verification/design only. Date 2026-10-11. Source-of-truth product: `Hiroshimeow/desktop-pet-go`, baseline branch `origin/feat/phase1-vietnamese-sts`, SHA `61d96af7ca493a43fea236a8298435622a405eb8`.
+Status: **Owner-authorized Pi Coding execution after evidence gates**, 2026-10-11. Source-of-truth product: `Hiroshimeow/desktop-pet-go`, canonical working branch `develop` (consolidated from voice branch `61d96af` plus specification commit `04f10ae`).
 
 ## Product contract
 
@@ -14,7 +14,7 @@ Reference: **OpenSuperWhisper** (OSW, `Starmel/OpenSuperWhisper`) as UX/behavior
 
 ## Baseline & invariants
 
-Verified G6 branch: `origin/master` is **older** than `origin/feat/phase1-vietnamese-sts`; root `master` contains unsaved user edits and must not be reset. `go-lite/voice_windows.go` owns current sidecar process and JSON event handling; `voice-sidecar/voice_sidecar.py` owns `sounddevice` capture, WebRTC VAD and `faster-whisper`; `go-lite/voice_controls_windows.go` owns existing reader controls. Windows `go test ./...` PASS; Python sidecar `uv sync --frozen` and 18 unittest tests PASS. Real GUI/mic tests NOT proven.
+Verified G6 history: legacy `origin/master` is older than former voice branch. The root checkout is now `develop`; July dirty work was preserved as local commit/tag `215ff2f` / `archive/pre-develop-20261011`, not reintroduced blindly. Independent dirty clones remain inventoried in `LEGACY_INVENTORY.md`. `go-lite/voice_windows.go` owns current sidecar process and JSON event handling; `voice-sidecar/voice_sidecar.py` owns `sounddevice` capture, WebRTC VAD and `faster-whisper`; `go-lite/voice_controls_windows.go` owns existing reader controls. Windows Go suite PASSED on a clean isolated worktree, but the canonical root currently FAILS one environment-dependent discovery test when ignored historical pet1–pet4 assets are present (see BASELINE.md); test isolation is a mandatory first fix. Python sidecar `uv sync --frozen` and 18 unittest tests PASS on the clean worktree. Real GUI/mic tests NOT proven.
 
 Preserve pet animation/runtime, voice chat, deterministic voice command matcher, text chat, TTS and existing reader, including opt-in voice behavior. Never block Win32 render/message loop, execute untrusted transcript, leak private audio to cloud implicitly, or log secrets/audio text by default. Cancel/timeouts must be bounded; missing backend must not kill pet.
 
@@ -63,4 +63,4 @@ LAN A5000 / RTX2080Ti: optional only after real end-to-end benchmark and encrypt
 
 ## Non-goals
 
-No new brain, no new TTS training, no Android app, no auto-submit, no wake-word rewrite, no speculative provider framework, no automatic microphone upload. **Phase 1 concludes with verified spec/plan/tasks; Phase 2 implementation needs approval.**
+No new brain, no new TTS training, no Android app, no auto-submit, no wake-word rewrite, no speculative provider framework, no automatic microphone upload. **Phase 1 technical evidence gates must pass before Phase 2 source edits; the operator has authorized starting the Pi Coding implementation workflow on `develop` on 2026-10-11. Ask separate approval for material capability reductions, sensitive cloud audio or destructive external cleanup.**

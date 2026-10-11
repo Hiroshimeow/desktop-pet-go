@@ -23,6 +23,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Worktrees must remain inside this repository
+/.wt/
+
 # Temp
 _zip_temp/
 tmp/

@@ -1,6 +1,6 @@
 # Live Dictation & Transcript Implementation Plan
 
-> **For agentic workers:** Use a fresh-context review gate and task-wise implementation. This document authorizes verification/spec planning only. Follow SPEC.md and TASKS.md.
+> **For agentic workers:** Use a fresh-context review gate and task-wise implementation. The operator authorized starting Pi Coding on `develop` on 2026-10-11. Complete Phase 1 evidence gates before changing product code, then execute Phase 2 incrementally without a weaker approximation. Follow SPEC.md, TASKS.md and AGENTS.md.
 
 **Goal:** Add mature OSW-like local dictation UX and real live transcript to Desktop Pet by reusing proven Windows implementations and the existing voice sidecar.
 
@@ -10,7 +10,7 @@
 
 ## Global constraints
 
-Worktrees exclusively under `.wt/<name>` in product repo. Root master dirty: don't reset, move/delete, force-push or stash user edits without explicit clearance. The voice branch at `61d96af` is canonical starting point, while remote master is old. Re-fetch on implementation. Existing `docs/VOICE_REQUIREMENTS.md` privacy/cancel/nonblocking/command safety constraints preserved. Historical voice-roadmap file/test budget applies to historical phases; OSW parity feature requires separate owner review, do not silently downgrade acceptance or rewrite the historical contract. Solution quality and mature upstream reuse outrank development cost. All tasks use evidence, not inferred pass.
+Develop directly on `develop`; **do not create other feature branches/worktrees**. If the operator explicitly requests a temporary worktree later, use only `.wt/<name>` inside the product repo. Former dirty master state was preserved at tag `archive/pre-develop-20261011` (commit `215ff2f`) and is subject to selective reconciliation, not blind cherry-pick. The former voice branch at `61d96af` is part of `develop`. Re-fetch without resetting/overwriting uncommitted user work on implementation. Existing `docs/VOICE_REQUIREMENTS.md` privacy/cancel/nonblocking/command safety constraints preserved. Historical voice-roadmap file/test budget applies to historical phases; OSW parity feature requires separate owner review, do not silently downgrade acceptance or rewrite the historical contract. Solution quality and mature upstream reuse outrank development cost. All tasks use evidence, not inferred pass.
 
 ## Phase 1 — verification/research/decision (no feature edits)
 
@@ -18,11 +18,11 @@ Worktrees exclusively under `.wt/<name>` in product repo. Root master dirty: don
 **Files:** `go-lite/voice_windows.go`, `go-lite/voice_controls_windows.go`, `voice-sidecar/voice_sidecar.py`, `docs/VOICE_REQUIREMENTS.md`; output `BASELINE.md`.
 
 - [x] Fetch origin, establish ancestry and canonical voice branch, preserve dirty master.
-- [x] Create isolated `.wt/live-transcript-phase1-spec`, no sibling worktree deletion.
-- [x] Windows Go regression: `cd go-lite; go test ./...` PASS (exit 0).
+- [x] Create and later consolidate the temporary `.wt/live-transcript-phase1-spec` into canonical `develop`; no sibling checkout deleted.
+- [x] Clean isolated worktree Go regression: `cd go-lite; go test ./...` PASS (exit 0). Canonical root regression FAILS in a fixture-dependent test because ignored historical `assets/pets/pet1..pet4` affect autodiscovery. Mandatory **first coding task**: make `TestAutoDiscoverAndMergedPetManifest` independent of ambient assets (synthetic isolated fixture), without deleting/moving user assets. Re-run full suite and record evidence.
 - [x] Install isolated Python dependencies: `cd voice-sidecar; uv sync --frozen` exit 0, then `uv run --no-sync python -m unittest -q test_voice_sidecar.py` exit 0 (18 tests PASS).
 - [ ] Build Windows GUI using existing `scripts/build-windows.ps1` only after inspecting its side effects; run mic + pet click/drag/voice/UI smoke with consent.
-- [ ] Inspect all Git worktrees under parent roots, dirty/busy/ownership; clean only with separate explicit evidence and approval. Don't delete anything in Phase 1.
+- [x] Inventory known sibling clones/checkouts in `LEGACY_INVENTORY.md`; they contain user data/dirty changes and are not safely removable without further review. Do not delete them automatically.
 
 ### P1.2 Upstream technical mapping
 **Files:** `REFERENCE_MATRIX.md`.
@@ -44,7 +44,7 @@ Worktrees exclusively under `.wt/<name>` in product repo. Root master dirty: don
 **Files:** `SPEC.md`, `PLAN.md`, `TASKS.md`, `BASELINE.md`, `REFERENCE_MATRIX.md`.
 - [ ] Review key target safety and clipboard regression risks, model privacy, fallback behavior and upstream legal notices.
 - [ ] Demonstrate reference decision: Handy external vs sidecar port; avoid CLI toggle being mistaken for embed API.
-- [ ] Confirm acceptance A01–A10 owners/evidence. STOP; do not implement on unapproved G2.
+- [ ] Confirm relevant Phase 1 research/architecture evidence and A01–A10 test design before source edits. Proceed to Phase 2 only when evidence gates support the chosen approach; ask the operator about material loss of parity, cloud-data authorization or destructive cleanup.
 
 ## Phase 2 — implementation tasks (deferred until Phase 1 acceptance)
 
