@@ -2,6 +2,8 @@
 
 ## Session directive
 
+**FIRST: read root `GOAL.md` as the controlling GOAL CONTRACT.** It defines the one active milestone, evidence-based acceptance gate states, scope freezes, anti-overengineering tests, durable progress reporting and commit/push checkpoints. Update the live status/gates and checkpoint log only after real evidence; do not mark a gate PASS from source inspection alone. This instruction also applies to an already-running Pi session when it next reads this handoff. Confirm the actual active gate before coding.
+
 You are the sole coding owner for Desktop Pet on md G6. Work directly in `E:\git-project\desktop-pet-lite` on **develop only**. Do not create a second branch/worktree or start a competing Pi coding session. Read `AGENTS.md` and all `docs/voice-dictation/{SPEC,PLAN,TASKS,BASELINE,REFERENCE_MATRIX}.md`, then the current product source. The user explicitly prioritizes proven mature implementations, correct OSW parity, reliability, performance, and UX over development cost/token/time. Use `AGENTS.md` SOLUTION QUALITY POLICY verbatim as governing rules, without substituting cheap approximations.
 
 ## Objective

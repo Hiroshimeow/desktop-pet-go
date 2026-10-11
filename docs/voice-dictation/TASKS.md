@@ -1,6 +1,6 @@
 # Task ledger — Desktop Pet live dictation
 
-Scope: New dictation/live transcript initiative, separate from historical Phase 1 Vietnamese STS. Status as of 2026-10-11.
+Scope: New dictation/live transcript initiative, separate from historical Phase 1 Vietnamese STS. Status as of 2026-10-11. **Canonical progress/scope contract is root `GOAL.md` (G00–G14).** This table tracks operational subtasks only; a TASK PASS never overrides a GOAL gate without evidence.
 
 | ID | Deliverable | State | Proof/gate |
 |---|---|---|---|

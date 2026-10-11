@@ -14,7 +14,7 @@
 
 ## Current objective
 
-Use `docs/voice-dictation/SPEC.md`, `PLAN.md`, `TASKS.md`, `REFERENCE_MATRIX.md`, `BASELINE.md` and `PI_HANDOFF.md` as the current dictation/live transcript contract. Desktop Pet is one product: pet click for chat, pet mic for voice conversation, F5 toggle/configurable hold-to-talk for system-wide dictation with stable partial/final and safe final-only insertion. Preserve existing pet, animation, voice commands, ZeroClaw integration and local TTS.
+**Mandatory first read: `GOAL.md` — the canonical owner-facing GOAL CONTRACT, gate scoreboard and approved scope.** Refresh it at every verified milestone, commit it with the evidence and push `develop` so the owner can see progress. Do not redefine its locked acceptance gates, make up PASS evidence or add speculative subsystems. Keep one active gate at a time. Use `docs/voice-dictation/SPEC.md`, `PLAN.md`, `TASKS.md`, `REFERENCE_MATRIX.md`, `BASELINE.md` and `PI_HANDOFF.md` as the detailed dictation/live transcript references. Desktop Pet is one product: pet click for chat, pet mic for voice conversation, F5 toggle/configurable hold-to-talk for system-wide dictation with stable partial/final and safe final-only insertion. Preserve existing pet, animation, voice commands, ZeroClaw integration and local TTS.
 
 **Reference parity policy:** OpenSuperWhisper upstream is the UX reference. Handy, OpenWhispr and local-live-caption-engine are concrete reuse candidates. Trace actual upstream source, commit, semantics, edge cases, license and tests before writing a substitute. Distinguish DOCUMENTED, SOURCE-VERIFIED and WINDOWS-RUN-VERIFIED. No claims of full feature parity without real evidence.
 

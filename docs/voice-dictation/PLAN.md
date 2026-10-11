@@ -1,6 +1,6 @@
 # Live Dictation & Transcript Implementation Plan
 
-> **For agentic workers:** Use a fresh-context review gate and task-wise implementation. The operator authorized starting Pi Coding on `develop` on 2026-10-11. Complete Phase 1 evidence gates before changing product code, then execute Phase 2 incrementally without a weaker approximation. Follow SPEC.md, TASKS.md and AGENTS.md.
+> **For agentic workers:** Read root `GOAL.md` first; it owns scope, verified G00–G14 progress, reporting checkpoints and anti-overengineering gates. Use a fresh-context review gate and task-wise implementation. The operator authorized starting Pi Coding on `develop` on 2026-10-11. Complete Phase 1 evidence gates before changing product code, then execute Phase 2 incrementally without a weaker approximation. Follow SPEC.md, TASKS.md and AGENTS.md.
 
 **Goal:** Add mature OSW-like local dictation UX and real live transcript to Desktop Pet by reusing proven Windows implementations and the existing voice sidecar.
 
