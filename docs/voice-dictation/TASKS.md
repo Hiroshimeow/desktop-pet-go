@@ -9,7 +9,7 @@ Scope: New dictation/live transcript initiative, separate from historical Phase 
 | P1-03 | Python voice-sidecar test | PASS | Canonical root reverified: `uv sync --frozen` exit 0 (28 packages checked); `uv run --no-sync python -m unittest -q test_voice_sidecar.py` exit 0, 18 tests in 0.546s |
 | P1-04 | Windows mic and GUI/voice smoke | PENDING | real microphone, response and process logs |
 | P1-05 | Sibling worktree/clone inventory | DONE_INVENTORY | See LEGACY_INVENTORY.md; cleanup deferred because dirty copies must be preserved |
-| P1-06 | OSW/Handy/OpenWhispr/Windows port source parity | IN_PROGRESS | G03 OSW01–21/test trace drafted in REFERENCE_MATRIX.md, factual review pending; G04 candidate review incomplete. SHA/license/semantics distinguished from runtime |
+| P1-06 | OSW/Handy/OpenWhispr/Windows port source parity | IN_PROGRESS | G03 OSW01–21/test trace SOURCE PASS after nine review findings owner-rechecked/reconciled in REFERENCE_MATRIX.md; G04 sole active gate, candidate review incomplete. SHA/license/semantics distinguished from runtime |
 | P1-07 | Actual Handy CLI / offline UX experiment G6 | PARTIAL | BENCHMARK.md: installed CLI/batch CPU runs; internal worker flag rejected exit 2. Offline GUI hotkey/live/paste untested; G04 not accepted |
 | P1-08 | ThinkBook CPU accuracy/latency benchmark | PRELIMINARY_ONLY | BENCHMARK.md: one synthetic sample, bounded batch trials/RSS. No human corpus/WER/CER, real mic or release-to-final proof; G06 TODO |
 | P1-09 | local-live-caption streaming comparator | PARTIAL | 27 existing tests PASS; actual probes expose stable/full invariant and false-overlap corruption; SOURCE_AUDIT.md/BENCHMARK.md. No live VI acceptance |

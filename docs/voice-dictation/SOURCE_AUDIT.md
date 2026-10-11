@@ -1,6 +1,6 @@
 # Pinned source audit — active evidence checkpoint
 
-Date: 2026-10-11. Sole owner, canonical `develop`. Baseline milestone: `fe9d81fef4c1e0aa6ce2fc11cd50ecbb008d0ba2`. **G03 OSW map drafted in REFERENCE_MATRIX.md and under factual review; G04/A10/Phase 1 architecture not accepted.**
+Date: 2026-10-11. Sole owner, canonical `develop`. Baseline milestone: `fe9d81fef4c1e0aa6ce2fc11cd50ecbb008d0ba2`. **G03 application source-map review reconciled in REFERENCE_MATRIX.md; G04/A10/Phase 1 architecture not accepted.**
 
 ## Acquisition and reproducibility
 
@@ -25,7 +25,7 @@ Paths below are relative to pinned OSW source. Claims come from actual source, n
 |---|---|---|---|
 | Trigger semantics | `OpenSuperWhisper/ShortcutManager.swift`: `handleKeyDown`, `handleKeyUp`, `setupRecordingTrigger` | Default Option+backtick; mouse > modifier-only > regular mutually exclusive triggers. Starts on down, next down requests stop; optional 300ms hold enables release-to-stop. Short taps lock recording rather than discard. Esc enabled only while indicator exists; handled on key-up. | PORT lifecycle technique, preserve explicit Desktop Pet F5 + separate configurable hold contract; do not claim identical short-tap behavior |
 | Session identity | `RecordingSessionController.swift`: `begin`, `requestStop`, `finish` | UUID identity, one session, stop action consumed once, stale finish ignored. | PORT identity/idempotency principle |
-| Indicator state/cancel | `Indicator/IndicatorWindow.swift`: `IndicatorViewModel` | idle/connecting/recording/decoding/busy/no-mic; repeated stop ignored outside capture. For >=10s recording, default Esc asks second confirmation within 5s; decoding cancel invalidates operation before task/native cancel. | PORT stale/cancel ordering, Desktop Pet immediate Esc discard per SPEC |
+| Indicator state/cancel | `Indicator/IndicatorWindow.swift`: `IndicatorViewModel` | idle/connecting/recording/decoding/busy/no-mic; repeated stop ignored outside capture. For >=10s recording, default Esc asks second confirmation within 5s; normal decoding cancel invalidates operation before task/native cancel. Busy-at-stop instead runs an untracked enqueue Task not covered by that cancel fence (matrix OSW12). | PORT stale/cancel ordering, Desktop Pet immediate Esc discard per SPEC |
 | Capture ordering and tail | `AudioRecorder.swift`: `startRecording`, `performStart`, `stopRecording` | Serial work queue keeps stop behind start, permissions checked; selected mic may change system default. Captures 250ms after stop to avoid clipped final word; discards <1s completed audio. No always-on pre-roll here. | PORT bounded tail and serial ownership; measure first-word behavior rather than invent pre-roll parity |
 | PCM capture | `PCMRecording.swift`: `PCMRecordingSession`, `PCMRecordingWriter` | AVAudioEngine tap copies buffer to serial writer; 16kHz int16 WAV + in-memory samples; converter flushed at finish. Active-channel mixing avoids quiet channels attenuating speech. Failure retains audio. | REUSE technique within existing sounddevice owner; no second mic runtime |
 | Mic switching | `MicrophoneService.swift`: `selectMicrophone`, `updateCurrentMicrophone`, `getDefaultMicrophone`; recorder `switchSystemDefaultInput`, `restoreSystemDefaultInputIfNeeded` | Persist UID; connected/disconnected refresh, selected missing falls back built-in then first available (not necessarily OS default). Restore prior system default only if still device recorder set. Bluetooth/continuity shows connecting based on file growth. | PORT explicit device selection/loss reporting; avoid mutating Windows OS default unnecessarily |
@@ -35,8 +35,8 @@ Paths below are relative to pinned OSW source. Claims come from actual source, n
 | Final output | `Indicator/IndicatorWindow.swift`: `decodeRecording`, `insertText`, `applyPostProcessing` | Checks cancellation/identity before history and before insertion; empty text discarded. Save WAV + local DB, then copy/paste according preferences. Optional added space after final punctuation; no Enter in this path. | PORT final-only identity fence; opt-in history, no implicit identifier cleanup |
 | Focus and geometry | `Utils/FocusUtils.swift`; `Indicator/IndicatorWindowManager.swift` | AX focus/caret used for indicator geometry, not saved insertion target identity. AX calls 250ms; anchor races 150ms deadline. Cursor fallback if anchor >200pt away, screen bounds clamped. Nonactivating click-through panel; hosting view reused/warmed, GPU-layer animations. | PORT nonactivating bounded geometry; **GAP** for original safe target/caret identity |
 | Clipboard | `Utils/ClipboardUtil.swift`: `insertText`, `restoreIfUnchanged`, `saveCurrentPasteboardContents` | Saves all available pasteboard types; layout-aware Cmd+V; restore after 1.5s only if changeCount unchanged. Does not verify original target or read receipt. | PORT sequence guard; evaluate Handy debug-gated receipt mechanism and its safety limits before any decision; neither fixed-delay nor receipt alone proves intended-target insertion |
-| History/retention/retry | `Models/Recording.swift`: `RecordingStore`; `TranscriptionQueue.swift`: `requeueRecording`, `processRecording` | GRDB local SQLite + UUID WAV, failed audio preserved, explicit regeneration, search/paging, retention skips pending, root-path guard. Queue retries do not auto-paste. No automatic infinite retry in inspected path. | Local opt-in retention/retry needs product design; do not silently persist all audio |
-| Glossary/settings | `Utils/AppPreferences.swift`, engine `makeFullParams` | Initial prompt (not structured glossary) bounded against rolling text context; languages, beam/temp, timestamps, blank suppression; Asian autocorrect optional; copy/paste and retention options. Default language en, auto-delete off. | Preserve VI/EN identifiers; explicitly distinguish prompt from fuzzy replacement |
+| History/retention/retry | `Models/Recording.swift`: `RecordingStore`; `TranscriptionQueue.swift`: `requeueRecording`, `processRecording` | GRDB local SQLite + UUID WAV, failed capture audio preserved, explicit regeneration, search/paging, retention query skips pending, normalized retention root-path guard. DB rows removed before files; filesystem failure may orphan audio, unlike tested DB DELETE refusal. Queue import temp classification uses unsafe raw path prefix (matrix OSW21). Queue retries do not auto-paste. No automatic infinite retry in inspected path. | Local opt-in retention/retry needs product design; do not silently persist all audio |
+| Glossary/settings | `Utils/AppPreferences.swift`, engine `makeFullParams` | Initial prompt (not structured glossary) bounded against rolling text context; languages, beam/temp, timestamps, blank suppression; Asian autocorrect optional; copy/paste and retention options. Recognition sampled after stop/per queued item, output prefs at insertion—not capture-start snapshots. Default language en, auto-delete off. | Preserve VI/EN identifiers; explicitly distinguish prompt from fuzzy replacement |
 
 Subsequent G03 review mapped permission/monitor edge cases, FluidAudio adapter, settings/UI/menu/file-drop, model downloads, postprocessing, storage errors, native API/VAD defaults and specialized test assertions; full source map and explicit gaps are in REFERENCE_MATRIX.md. Native macOS tests NOT RUN on this Windows host (xcodebuild unavailable); source coverage is not runtime acceptance. Fluid adapter has no VI support in its UI and no wired stored transcriptionTask despite cancellation method; do not infer interruptibility.
 
@@ -76,6 +76,39 @@ Read LEGACY_INVENTORY.md. Archive `215ff2f` remains preserved. Compared archive/
 - Canonical Python structural probe: exit **0**, exactly OSW01–OSW21, all 20 referenced upstream `*Tests.swift` files exist, all three Package.resolved SHA pins match. This checks structure/pins, **not semantic completeness**.
 - `command -v xcodebuild`: unavailable. Native OSW tests **NOT RUN**, not skipped/PASS.
 - Independent read-only source factual review requested; no second coding owner or branch. **G03 remains DOING until semantic review is reconciled.** G04/G06 unchanged; no dictation implementation or Windows UX acceptance claimed.
+
+## G03 factual-review reconciliation — 2026-10-11 ~17:53 JST
+
+Read-only review `d620cf93-d478-41b` returned nine findings; owner independently read the cited source/test regions and corrected all nine (REFERENCE_MATRIX.md reconciliation table). Engine/utility paths and cancel entry point corrected; busy-at-stop untracked task, DB-first deletion/file orphaning, AX/Cocoa fallback mismatch, late settings sampling, raw temp-prefix misclassification, and existence-only model validation now explicit. Test descriptions distinguish injected controller logic from native abort, mapping-only mouse tests, and restore-delay constant from actual consumers. No upstream source changed or copied.
+
+Relevant **application** flow coverage, test trace and dependency/native exclusions are explicit in the matrix; no exhaustive dependency/Windows runtime certification. Owner read remaining small duration/debug/layout/protocol utilities and both UI-test files (launch scaffolds only). This closes G03 source mapping, not G04 candidate research, G06 benchmark or any feature gate.
+
+Fresh regression: `cd go-lite && go test -count=1 ./...` exit **0**, root3.178s/all test-bearing packages PASS; `cd voice-sidecar && uv run --no-sync python -m unittest -q test_voice_sidecar.py` exit **0**, **18 tests in0.554s**; `git diff --check` exit **0** (CRLF notices only).
+
+Reproducible citation/pin check from canonical `voice-sidecar` using `uv run --no-sync python` (cache acquired as described above):
+
+```python
+from pathlib import Path
+import json, re
+root = Path('C:/Users/admin/AppData/Local/Temp/desktop-pet-reference-z0w1fdur/Starmel__OpenSuperWhisper/OpenSuperWhisper-c8e6fe79d6851078940f459ab7dbc8ee39e2a97d')
+text = Path('../docs/voice-dictation/REFERENCE_MATRIX.md').read_text(encoding='utf-8')
+assert re.findall(r'^\| (OSW\d\d) ', text, re.M) == [f'OSW{i:02}' for i in range(1, 22)]
+for name in set(re.findall(r'([A-Za-z][A-Za-z0-9]*Tests\.swift)', text)):
+    assert (root / 'OpenSuperWhisperTests' / name).is_file(), name
+for pin in json.loads((root / 'Package.resolved').read_text())['pins']:
+    assert pin['state']['revision'] in text, pin['identity']
+for path, refs in re.findall(r'`([\w/]+\.swift)::([^`]+)`', text):
+    if path == 'HotKey.swift':  # separately pinned KeyboardShortcuts source
+        continue
+    source = (root / 'OpenSuperWhisper' / path).read_text(encoding='utf-8')
+    for ref in refs.split('/'):
+        name = ref.split('(')[0].split('.')[-1]
+        if '*' not in name and ' ' not in name:
+            assert re.search(r'\b' + re.escape(name) + r'\b', source), (path, name)
+print('OSW rows, test paths, dependency pins, application path/symbol citations verified')
+```
+
+This mechanical check verifies references, not semantic correctness; source reads/reconciliation provide the latter. The historical17:46 pending-review entry above remains timestamped, not current status.
 
 ## Runtime baseline observations
 

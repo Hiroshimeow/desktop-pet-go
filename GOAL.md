@@ -13,15 +13,15 @@
 | Field | Verified value |
 |---|---|
 | **Overall** | **IN PROGRESS** — not product-complete |
-| **Accepted gates** | **3 / 15** (count of evidenced gates, **not** percentage of elapsed work) |
-| **Current gate (WIP=1)** | **G03** — full source-level OpenSuperWhisper dictation parity map |
-| **Next gate** | G04 — evaluate Handy/OpenWhispr/Windows port and reusable streaming mechanisms |
-| **Last accepted change** | `fe9d81f` — Go discovery test isolated from user-installed pet assets |
+| **Accepted gates** | **4 / 15** (count of evidenced gates, **not** percentage of elapsed work) |
+| **Current gate (WIP=1)** | **G04** — evaluate Handy/OpenWhispr/Windows port and reusable streaming mechanisms |
+| **Next gate** | G05 — one justified integration architecture based on parity/API/measurements |
+| **Last accepted change** | G03 source map at pinned OSW `c8e6fe79…`; checkpoint `a093dd1` plus factual-review reconciliation below |
 | **Confirmed baseline** | Go `go test -count=1 ./...` PASS; Python sidecar 18/18 PASS on G6 |
-| **Last checked** | 2026-10-11 ~17:46 JST, same native Pi session; Go/Python baselines freshly rerun PASS; G03 source map under factual review |
-| **Active blocker** | None confirmed for G03. Real microphone, CPU latency and Windows target insertion remain UNVERIFIED, not PASS. |
+| **Last checked** | 2026-10-11 ~17:53 JST, same native Pi session; nine source-review findings owner-verified/reconciled; Go/Python baselines freshly PASS |
+| **Active blocker** | Handy v0.9.8 rejects internal worker flag (exit2); unsupported worker integration ruled out, alternatives under G04 review. Real mic/CPU accuracy/live GUI/target insertion still UNVERIFIED. |
 | **Operational risk** | Rechecked ~17:32 JST: old PIDs 25996/22920 absent; one Pi node process explicitly names this session (PID 5628, interactive launcher parent 23528). No competing process with this session ID observed. Other Pi clients have different/unspecified sessions and were not stopped. Preserve operator commits through HEAD `8f3cebf`. |
-| **Immediate next artifact** | Reconcile factual review of `docs/voice-dictation/REFERENCE_MATRIX.md` OSW01–21/test trace; retain G03 DOING until semantic verification closes |
+| **Immediate next artifact** | Extend `REFERENCE_MATRIX.md` / `SOURCE_AUDIT.md` with exact released Handy and other G04 candidate flows/API limits; controlled offline Windows smoke without changing user settings |
 
 **Operator view:** `GOAL.md` for status → `docs/voice-dictation/TASKS.md` for detailed queue → `docs/voice-dictation/BASELINE.md` / `REFERENCE_MATRIX.md` for evidence. Update the table immediately whenever the current gate or blocker changes. Push verified milestone updates to `origin/develop` so the remote view stays useful.
 
@@ -48,8 +48,8 @@ Allowed states: `TODO` / `DOING` / `PASS` / `BLOCKED`. Only **one primary DOING 
 | **G00** | Single canonical `develop`; archived previous dirty changes; no competing worktree | **PASS** | `ecfd5a2`; backup tag `archive/pre-develop-20261011`; one registered Git worktree |
 | **G01** | Go baseline robust on real G6 checkout, including extra ignored user assets | **PASS** | `fe9d81f`; `cd go-lite; go test -count=1 ./...` exit 0 (2026-10-11) |
 | **G02** | Python voice sidecar baseline reproducible | **PASS** | `uv sync --frozen`; `uv run --no-sync python -m unittest -q test_voice_sidecar.py` → 18 PASS |
-| **G03** | OSW relevant workflow/edge-case **source-level parity map**, pinned SHA/license; gaps honestly marked | **DOING** | `REFERENCE_MATRIX.md`: OSW01–21 + test trace drafted; source pins/paths structurally checked, independent factual review pending. `SOURCE_AUDIT.md` fresh baseline evidence; no native/macOS PASS |
-| **G04** | Handy/OpenWhispr/OSW-Windows + local caption research; Windows Handy API/CLI limits demonstrated | TODO | Source/commit mapping + real native smoke and limitations |
+| **G03** | OSW relevant workflow/edge-case **source-level parity map**, pinned SHA/license; gaps honestly marked | **PASS** | `a093dd1` + ~17:53 reconciliation: `REFERENCE_MATRIX.md` OSW01–21/test trace, nine review findings source-rechecked, explicit dependency exclusions. `SOURCE_AUDIT.md` reproducible citation/pin check + fresh Go/Python PASS. SOURCE only, no native/macOS runtime claim |
+| **G04** | Handy/OpenWhispr/OSW-Windows + local caption research; Windows Handy API/CLI limits demonstrated | **DOING** | Preliminary SOURCE_AUDIT/BENCHMARK: installed batch CLI runs; hidden worker rejected exit2. Finish release/candidate mapping, licenses and controlled GUI smoke; not accepted |
 | **G05** | One justified STT/GUI/insertion architecture based on parity, API limits and measured evidence | TODO | Decision record with reusable components, missing interfaces and failure handling |
 | **G06** | G6 real microphone input + local Vietnamese/English/code-switch CPU accuracy/latency benchmark | TODO | Auditable WAV reference set (private), WER/CER, warm/cold p50/p95, CPU/RSS; no guessed numbers |
 | **G07** | Live preview with correct unstable/stable/final events; no loss/duplication across overlapping speech | TODO | Deterministic segmentation/stitch tests + real partial event trace |
@@ -102,8 +102,9 @@ When two solutions satisfy **the same complete contract**, choose the proven sim
 | 2026-10-11 after 17:20 | OPS | Observed duplicate Pi clients sharing one session ID; earlier session termination handle expired; no claim of single writer until verified | Old `--print` PID 25996; newer interactive PID 22920 |
 | 2026-10-11 ~17:32 | G03/OPS | Read authoritative contract, preserved uncommitted SOURCE_AUDIT/BENCHMARK and operator commits; same session identity, old duplicate PIDs absent, only one explicit matching Pi client. G03 remains sole DOING; preliminary CLI/batch work does not pass G04/G06. | HEAD `8f3cebf`; OSW source `c8e6fe79d6851078940f459ab7dbc8ee39e2a97d` |
 | 2026-10-11 ~17:46 | G03 | Drafted OSW01–21 relevant source map, explicit live/target/privacy/cancellation gaps and test trace; structural probe validates 20 test files and dependency pins. Fresh Go regression exit0; Python18/18 in0.588s; diff check exit0. Read-only factual review pending; G03 DOING, G04/G06 not accepted. | `REFERENCE_MATRIX.md`, `SOURCE_AUDIT.md`, `BENCHMARK.md` |
+| 2026-10-11 ~17:53 | G03→G04 | Owner source-rechecked all nine factual-review findings; citations, busy queue/cancel, deletion ordering, geometry, settings sampling, path classification, downloads and test qualifications corrected. G03 source map PASS with bounded dependency exclusions; 4/15. Fresh Go exit0, Python18/18 in0.554s, diff check exit0. G04 sole DOING; no Windows product gate advanced. | `REFERENCE_MATRIX.md` reconciliation; `SOURCE_AUDIT.md` reproducible check |
 
-**Current next step:** reconcile **G03** source-map factual review before acceptance; no native OSW runtime claim or second independent voice core.
+**Current next step:** execute **G04** released-candidate source/API/license mapping and controlled Windows checks; do not build a second independent voice core.
 
 ---
 
