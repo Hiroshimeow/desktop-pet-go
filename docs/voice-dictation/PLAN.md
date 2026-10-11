@@ -19,7 +19,7 @@ Develop directly on `develop`; **do not create other feature branches/worktrees*
 
 - [x] Fetch origin, establish ancestry and canonical voice branch, preserve dirty master.
 - [x] Create and later consolidate the temporary `.wt/live-transcript-phase1-spec` into canonical `develop`; no sibling checkout deleted.
-- [x] Clean isolated worktree Go regression: `cd go-lite; go test ./...` PASS (exit 0). Canonical root regression FAILS in a fixture-dependent test because ignored historical `assets/pets/pet1..pet4` affect autodiscovery. Mandatory **first coding task**: make `TestAutoDiscoverAndMergedPetManifest` independent of ambient assets (synthetic isolated fixture), without deleting/moving user assets. Re-run full suite and record evidence.
+- [x] Canonical root regression remediated: reproduced ambient pet1..pet4 failure; synthetic `t.TempDir()` fixture now verifies lexical default, exact all-set, filtering, ordered/deduplicated selection, merge overrides/inheritance and blacklist. Targeted tests repeated 10 times and full `go test -count=1 ./...` exit 0; no user assets changed. See BASELINE.md.
 - [x] Install isolated Python dependencies: `cd voice-sidecar; uv sync --frozen` exit 0, then `uv run --no-sync python -m unittest -q test_voice_sidecar.py` exit 0 (18 tests PASS).
 - [ ] Build Windows GUI using existing `scripts/build-windows.ps1` only after inspecting its side effects; run mic + pet click/drag/voice/UI smoke with consent.
 - [x] Inventory known sibling clones/checkouts in `LEGACY_INVENTORY.md`; they contain user data/dirty changes and are not safely removable without further review. Do not delete them automatically.

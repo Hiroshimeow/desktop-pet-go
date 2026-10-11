@@ -5,8 +5,8 @@ Scope: New dictation/live transcript initiative, separate from historical Phase 
 | ID | Deliverable | State | Proof/gate |
 |---|---|---|---|
 | P1-01 | Git branch/worktree identification; preserve dirty master | DONE | remote feature 61d96af; .wt isolated |
-| P1-02 | Baseline Go suite | FAIL_ENV_DEPENDENCY | Clean isolated worktree PASS; canonical root `go test -count=1 ./...` FAIL in `TestAutoDiscoverAndMergedPetManifest`: test assumes pet5 first despite ignored pet1..pet4 directories. Fix test isolation, do not delete assets |
-| P1-03 | Python voice-sidecar test | PASS | `uv sync --frozen` exit 0; 18 unittest cases PASS |
+| P1-02 | Baseline Go suite | PASS | Canonical develop: reproduced failure, isolated discovery tests with synthetic temp assets; targeted tests repeated 10 times and `go test -count=1 ./...` exit 0. See BASELINE.md remediation evidence; user assets unchanged |
+| P1-03 | Python voice-sidecar test | PASS | Canonical root reverified: `uv sync --frozen` exit 0 (28 packages checked); `uv run --no-sync python -m unittest -q test_voice_sidecar.py` exit 0, 18 tests in 0.546s |
 | P1-04 | Windows mic and GUI/voice smoke | PENDING | real microphone, response and process logs |
 | P1-05 | Sibling worktree/clone inventory | DONE_INVENTORY | See LEGACY_INVENTORY.md; cleanup deferred because dirty copies must be preserved |
 | P1-06 | OSW/Handy/OpenWhispr/Windows port source parity | PENDING | exact SHA, paths, license, state transitions |

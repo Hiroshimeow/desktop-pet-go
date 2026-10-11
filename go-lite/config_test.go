@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"image"
 	"image/png"
 	"os"
@@ -22,29 +23,95 @@ func testManifest(t *testing.T) PetManifest {
 	return manifest
 }
 
+// discoveryFixture deliberately creates pets out of lexical order and includes
+// non-pets. Discovery tests must not depend on optional user-installed assets.
+func discoveryFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	base := PetManifest{
+		Schema: 1, FrameWidth: 2, FrameHeight: 2, Columns: 2,
+		DefaultAnimation: "idle", AnimationDir: "animations",
+		ActBlacklist: []string{"hidden*"},
+		Animations: map[string]AnimationDef{
+			"idle": {File: "idle.png", FPS: 4, Loop: true, Kind: "state"},
+		},
+	}
+	data, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pet.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"zeta", "alpha"} {
+		dir := filepath.Join(root, "pets", id, "animations")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"idle", "walk", "run", "cry", "angry", "hidden_test"} {
+			writeTestPNG(t, filepath.Join(dir, name+".png"), 4, 2)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "pets", "alpha", "pet.json"), []byte(`{"name":"Alpha override","scale":0.75,"animations":{"idle":{"fps":9}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "pets", "not-a-pet"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pets", "not-a-directory"), []byte("ignored"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func TestAutoDiscoverAndMergedPetManifest(t *testing.T) {
-	profile, _, err := loadRuntimeProfile("", testAssetsRoot, "")
+	assetsRoot := discoveryFixture(t)
+	profile, profileDir, err := loadRuntimeProfile("", assetsRoot, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(profile.ActivePets) != 1 {
 		t.Fatalf("expected one default discovered pet group, got %d", len(profile.ActivePets))
 	}
-	if profile.ActivePets[0].PetID != testPetID {
-		t.Fatalf("expected default pet %q, got %q", testPetID, profile.ActivePets[0].PetID)
+	if profile.ActivePets[0].PetID != "alpha" {
+		t.Fatalf("expected lexical first pet alpha, got %q", profile.ActivePets[0].PetID)
+	}
+	if profileDir != "." || profile.Schema != 2 {
+		t.Fatalf("unexpected discovered profile: dir=%q schema=%d", profileDir, profile.Schema)
 	}
 
-	allProfile, _, err := loadRuntimeProfile("", testAssetsRoot, "all")
+	allProfile, _, err := loadRuntimeProfile("", assetsRoot, "all")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allProfile.ActivePets) < 1 {
-		t.Fatalf("expected at least 1 discovered pet group, got %d", len(allProfile.ActivePets))
+	if len(allProfile.ActivePets) != 2 {
+		t.Fatalf("expected exactly two discovered pets, got %+v", allProfile.ActivePets)
+	}
+	for i, id := range []string{"alpha", "zeta"} {
+		if allProfile.ActivePets[i].PetID != id {
+			t.Fatalf("pet %d: expected %q, got %+v", i, id, allProfile.ActivePets[i])
+		}
+	}
+	selected, _, err := loadRuntimeProfile("", assetsRoot, "zeta,alpha,zeta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected.ActivePets) != 2 || selected.ActivePets[0].PetID != "zeta" || selected.ActivePets[1].PetID != "alpha" {
+		t.Fatalf("explicit selection must preserve order and deduplicate: %+v", selected.ActivePets)
 	}
 
-	manifest := testManifest(t)
-	if manifest.ID != testPetID {
-		t.Fatalf("bad manifest id %q", manifest.ID)
+	manifest, err := LoadPetManifestMerged(filepath.Join(assetsRoot, "pet.json"), filepath.Join(assetsRoot, "pets", "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ID != "alpha" || manifest.Name != "Alpha override" || manifest.Scale != 0.75 {
+		t.Fatalf("pet-local overrides not merged: %+v", manifest)
+	}
+	if idle := manifest.Animations["idle"]; idle.FPS != 9 || !idle.Loop || idle.Kind != "state" {
+		t.Fatalf("default animation metadata not merged with pet override: %+v", idle)
+	}
+	if _, ok := manifest.Animations["hidden_test"]; ok {
+		t.Fatal("blacklisted animation should not be discovered")
 	}
 	if manifest.AnimationDir != "animations" {
 		t.Fatalf("pet animation_dir must be local to pet folder")
@@ -58,12 +125,12 @@ func TestAutoDiscoverAndMergedPetManifest(t *testing.T) {
 }
 
 func TestUnknownPetSelectionReturnsAvailablePets(t *testing.T) {
-	_, _, err := loadRuntimeProfile("", testAssetsRoot, "missing-pet")
+	_, _, err := loadRuntimeProfile("", discoveryFixture(t), "missing-pet")
 	if err == nil {
 		t.Fatal("expected missing pet selection to fail")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "missing-pet") || !strings.Contains(msg, testPetID) || !strings.Contains(msg, "available=") {
+	if !strings.Contains(msg, "missing-pet") || !strings.Contains(msg, "available=alpha,zeta") {
 		t.Fatalf("error should include missing id and available pets, got %q", msg)
 	}
 }
