@@ -161,22 +161,23 @@ type InputEvent struct {
 }
 
 type App struct {
-	Profile         Profile
-	Pets            []*WindowPet
-	Inputs          chan InputEvent
-	ScreenW         int
-	ScreenH         int
-	ClickCommand    string
-	RightCommand    string
-	HookTimeout     time.Duration
-	HookSem         chan struct{}
-	VoiceEvents     chan voiceEvent
-	Voice           *VoiceController
-	DictationKeys   *dictationHotkeys
-	Dictation       dictationSession
-	DictationSerial uint64
-	TimerID         uintptr
-	LastTick        time.Time
+	Profile           Profile
+	Pets              []*WindowPet
+	Inputs            chan InputEvent
+	ScreenW           int
+	ScreenH           int
+	ClickCommand      string
+	RightCommand      string
+	HookTimeout       time.Duration
+	HookSem           chan struct{}
+	VoiceEvents       chan voiceEvent
+	Voice             *VoiceController
+	DictationKeys     *dictationHotkeys
+	Dictation         dictationSession
+	DictationSerial   uint64
+	DictationDelivery dictationDelivery
+	TimerID           uintptr
+	LastTick          time.Time
 }
 
 var app *App
@@ -605,6 +606,7 @@ func (a *App) tick() {
 	a.processInputEvents()
 	a.processVoiceEvents()
 	a.processDictationInputs()
+	a.processDictationDelivery()
 	now := time.Now()
 	dt := now.Sub(a.LastTick).Seconds()
 	if dt <= 0 || dt > 0.05 {

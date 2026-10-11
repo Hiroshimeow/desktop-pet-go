@@ -14,6 +14,8 @@ const (
 	voiceMenuPauseResume   = 1002
 	voiceMenuSkip          = 1003
 	voiceMenuStop          = 1004
+	voiceMenuCopyFinal     = 1005
+	voiceMenuDiscardFinal  = 1006
 
 	mfString       = 0x0000
 	tpmRightButton = 0x0002
@@ -61,6 +63,14 @@ func (a *App) showVoiceMenu(hwnd uintptr) {
 		}
 	}
 
+	if a.DictationDelivery.text != "" && a.DictationDelivery.worker == nil {
+		if err := appendVoiceMenuItem(menu, voiceMenuCopyFinal, "Copy final (replaces clipboard; no paste)"); err != nil {
+			return
+		}
+		if err := appendVoiceMenuItem(menu, voiceMenuDiscardFinal, "Discard final"); err != nil {
+			return
+		}
+	}
 	var pt point
 	if r, _, err := pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt))); r == 0 {
 		log.Printf("voice menu cursor failed: %v", err)
@@ -76,6 +86,10 @@ func (a *App) showVoiceMenu(hwnd uintptr) {
 		0,
 	)
 	switch command {
+	case voiceMenuCopyFinal:
+		a.copyDictationFinal()
+	case voiceMenuDiscardFinal:
+		a.discardDictationFinal()
 	case voiceMenuReadClipboard:
 		a.readClipboardVoice(hwnd)
 	case voiceMenuPauseResume:

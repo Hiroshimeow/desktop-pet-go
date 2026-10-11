@@ -184,10 +184,14 @@ var (
 )
 
 type dictationFocus struct {
-	top, focus, caret uintptr
-	pid               uint32
-	rect              [4]int32
-	valid             bool
+	top, focus, caret            uintptr
+	pid                          uint32
+	rect                         [4]int32
+	valid                        bool
+	selectionStart, selectionEnd uint32
+	selectionValid               bool
+	epoch                        uint64
+	cancelEpoch                  uint64
 }
 type dictationGUIInfo struct {
 	size, flags                               uint32
@@ -205,7 +209,11 @@ func captureDictationFocus() dictationFocus {
 	var g dictationGUIInfo
 	g.size = uint32(unsafe.Sizeof(g))
 	ok, _, _ := dictGUIInfo.Call(tid, uintptr(unsafe.Pointer(&g)))
-	return dictationFocus{top: fg, focus: g.focus, caret: g.caret, pid: pid, rect: g.rect, valid: ok != 0 && g.focus != 0}
+	f := dictationFocus{top: fg, focus: g.focus, caret: g.caret, pid: pid, rect: g.rect, valid: ok != 0 && g.focus != 0}
+	captureNativeSelection(&f)
+	f.epoch = deliveryEpoch.Load()
+	f.cancelEpoch = deliveryCancelEpoch.Load()
+	return f
 }
 
 // An open IME may own F-keys for candidate selection. Query its native status
@@ -294,6 +302,7 @@ func dictationKeyboardProc(code int, wparam, lparam uintptr) uintptr {
 				}
 			}
 			if action != dictationNone {
+				fenceDictationPhysicalAction(action)
 				h.enqueue(dictationInput{action: action, target: focus, hold: h.state.holding, at: time.Now()})
 			}
 			if !consume {
@@ -347,6 +356,7 @@ func (h *dictationHotkeys) reconcileHold(physicallyDown bool) {
 		h.state.down[vk] = false
 		h.state.holding = false
 		h.state.recording = false
+		fenceDictationPhysicalAction(dictationCancel)
 		h.enqueue(dictationInput{action: dictationCancel, at: time.Now()})
 	}
 }
@@ -357,6 +367,7 @@ func (h *dictationHotkeys) enqueue(in dictationInput) {
 	default:
 		h.overflow.Store(true)
 		h.ready.Store(false)
+		fenceDictationPhysicalAction(dictationCancel)
 	}
 }
 func (h *dictationHotkeys) finish() {
@@ -420,6 +431,12 @@ func startDictationHotkeys(bindings dictationBindings) (*dictationHotkeys, error
 			return
 		}
 		defer dictUnhook.Call(hook)
+		unwatch, err := watchDictationTarget()
+		if err != nil {
+			started <- err
+			return
+		}
+		defer unwatch()
 		started <- nil
 		for {
 			r, _, _ := pGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
@@ -473,6 +490,7 @@ type dictationSession struct {
 	startedAt                time.Time
 	target                   dictationFocus
 	stable, unstable, result string
+	finalSeen, failed        bool
 }
 
 func (a *App) processDictationInputs() {
@@ -483,17 +501,19 @@ func (a *App) processDictationInputs() {
 	if a.Voice == nil || a.Voice.isStopped() {
 		h.ready.Store(false)
 		if a.Dictation.sessionID != "" {
+			a.cancelDictationDelivery()
 			a.Dictation = dictationSession{}
 			h.finish()
 		}
 		return
 	}
-	ready := a.Voice.ready && !a.Voice.listen && !a.Voice.commandMode && a.Voice.activeTurn == "" && len(a.Voice.queue) == 0
+	ready := a.DictationDelivery.text == "" && a.Voice.ready && !a.Voice.listen && !a.Voice.commandMode && a.Voice.activeTurn == "" && len(a.Voice.queue) == 0
 	h.ready.Store(ready && !h.overflow.Load())
 	if h.overflow.Swap(false) {
 		// A lost release/cancel cannot leave capture active. Retire the bounded
 		// sidecar owner and discard every queued edge, not just the latest one.
 		a.Voice.cancel()
+		a.cancelDictationDelivery()
 		a.Dictation = dictationSession{}
 		h.finish()
 		for {
@@ -532,7 +552,7 @@ func (a *App) handleDictationInput(in dictationInput) {
 		if a.Dictation.sessionID != "" {
 			return
 		}
-		if !v.ready || v.listen || v.commandMode || v.activeTurn != "" || len(v.queue) != 0 {
+		if a.DictationDelivery.text != "" || !v.ready || v.listen || v.commandMode || v.activeTurn != "" || len(v.queue) != 0 {
 			if a.DictationKeys != nil {
 				a.DictationKeys.finish()
 			}
@@ -540,6 +560,7 @@ func (a *App) handleDictationInput(in dictationInput) {
 		}
 		a.Dictation = dictationSession{sessionID: fmt.Sprintf("dict-%d-%d", time.Now().UnixNano(), a.DictationSerial), recording: true, target: in.target, hold: in.hold, startedAt: in.at}
 		a.DictationSerial++
+		a.beginDictationDelivery(in.target)
 		kind = "dictation_start"
 	case dictationStop:
 		if a.Dictation.sessionID == "" || !a.Dictation.recording {
@@ -550,18 +571,21 @@ func (a *App) handleDictationInput(in dictationInput) {
 		if a.Dictation.hold && !a.Dictation.startedAt.IsZero() && in.at.Sub(a.Dictation.startedAt) < 250*time.Millisecond {
 			kind = "dictation_cancel"
 			a.Dictation.cancelled = true
+			a.cancelDictationDelivery()
 		}
 	case dictationCancel:
 		if a.Dictation.sessionID == "" {
 			return
 		}
 		a.Dictation.cancelled = true
+		a.cancelDictationDelivery()
 		a.Dictation.recording = false
 		kind = "dictation_cancel"
 	default:
 		return
 	}
 	if err := v.send(voiceCommand{Type: kind, ProtocolVersion: 1, SessionID: a.Dictation.sessionID}); err != nil {
+		a.cancelDictationDelivery()
 		a.Dictation = dictationSession{}
 		if a.DictationKeys != nil {
 			a.DictationKeys.finish()
@@ -585,12 +609,25 @@ func (a *App) handleDictationEvent(ev voiceEvent) bool {
 			d.unstable = ev.Unstable
 		}
 	case "final":
-		if !d.cancelled {
+		if d.finalSeen || d.recording {
+			d.failed = true
+		}
+		d.finalSeen = true
+		if !d.cancelled && !d.failed {
 			d.result = ev.Text
-		} // Visual/storage only; never route to agent/TTS or unsafe paste.
-	case "error":
-		log.Printf("dictation error code=%s", ev.Code)
+		}
+	case "cancelled", "error":
+		d.failed = true
+		a.cancelDictationDelivery()
+		if ev.Type == "error" {
+			log.Printf("dictation error code=%s", ev.Code)
+		}
 	case "done":
+		if !d.cancelled && !d.failed && !d.recording && d.finalSeen && d.result != "" && ev.Outcome == "final" {
+			a.finishDictationDelivery(d.result)
+		} else {
+			a.cancelDictationDelivery()
+		}
 		a.Dictation = dictationSession{}
 		if a.DictationKeys != nil {
 			a.DictationKeys.finish()
