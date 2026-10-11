@@ -19,7 +19,8 @@
 | **Last accepted change** | `fe9d81f` — Go discovery test isolated from user-installed pet assets |
 | **Confirmed baseline** | Go `go test -count=1 ./...` PASS; Python sidecar 18/18 PASS on G6 |
 | **Last checked** | 2026-10-11 ~17:18 JST, G6 Git + test evidence |
-| **Active blocker** | None confirmed. Real microphone, CPU latency and Windows target insertion remain UNVERIFIED, not PASS. |
+| **Active blocker** | None confirmed for G03. Real microphone, CPU latency and Windows target insertion remain UNVERIFIED, not PASS. |
+| **Operational risk** | Two Pi processes were observed with the same session ID: older owned `--print` PID 25996 and newer interactive PID 22920. Stop the stale client through an authorized process-owner action before permitting concurrent writes; identity must be rechecked because PIDs can change. |
 | **Immediate next artifact** | `docs/voice-dictation/REFERENCE_MATRIX.md`: OSW source SHA + exact file/function/behavior + known missing features and licensing |
 
 **Operator view:** `GOAL.md` for status → `docs/voice-dictation/TASKS.md` for detailed queue → `docs/voice-dictation/BASELINE.md` / `REFERENCE_MATRIX.md` for evidence. Update the table immediately whenever the current gate or blocker changes. Push verified milestone updates to `origin/develop` so the remote view stays useful.
@@ -98,6 +99,7 @@ When two solutions satisfy **the same complete contract**, choose the proven sim
 | 2026-10-11 17:03 | G00 | Single `develop`, historical WIP archived; scope/quality policy committed | `ecfd5a2`; tag `archive/pre-develop-20261011` |
 | 2026-10-11 17:12 | G01 | Environment-sensitive pet discovery test fixed with isolated assets; full Go test PASS | `fe9d81f` |
 | 2026-10-11 ~17:18 | G02 | Python sidecar 18/18 PASS on Windows G6; canonical Go suite independently rechecked PASS | `docs/voice-dictation/BASELINE.md` + local runs |
+| 2026-10-11 after 17:20 | OPS | Observed duplicate Pi clients sharing one session ID; earlier session termination handle expired; no claim of single writer until verified | Old `--print` PID 25996; newer interactive PID 22920 |
 
 **Current next step:** complete **G03** OSW relevant dictation behavior map with pinned source and indicate which features require verified Windows adaptations; don't build a second independent voice core.
 
