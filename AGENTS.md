@@ -53,6 +53,11 @@ KISS means:
 KISS does NOT mean:
 "the easiest or fastest approximation of the requested product."
 
+## Autonomous execution (owner-authorized 2026-10-11)
+
+- **Read `docs/voice-dictation/AUTONOMOUS_WORKFLOW.md` and use the installed global `multi-model-orchestration` skill.** Launch a durable, actual `SubagentWorkflow` inside the one existing interactive Pi session and carry all G04-G14 gates through internal multi-model review, correction, proof, commit and automatic next-stage dispatch. No per-gate user approval or end-of-turn wait. Reviews are read-only; one serial coding subagent owns `develop` writes.
+- The workflow must **actually run**, not just be planned. Keep the progress gate in `GOAL.md`. Only seek owner authorization for sensitive data/cloud, destructive changes, genuine contract downgrade or blocked external prerequisites. Preserve the quality policy below over any simplistic YAGNI shortcut.
+
 ## Verification and reliability
 
 - Choose a durable, root-cause solution after tracing the actual failure and mature reference. Do not ship mocks, unbounded polling, fragile shell/process spawning on every hotkey, silent fallback to cloud, or incomplete focus insertion as if they met acceptance.

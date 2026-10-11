@@ -10,7 +10,7 @@
 
 ## Global constraints
 
-Develop directly on `develop`; **do not create other feature branches/worktrees**. If the operator explicitly requests a temporary worktree later, use only `.wt/<name>` inside the product repo. Former dirty master state was preserved at tag `archive/pre-develop-20261011` (commit `215ff2f`) and is subject to selective reconciliation, not blind cherry-pick. The former voice branch at `61d96af` is part of `develop`. Re-fetch without resetting/overwriting uncommitted user work on implementation. Existing `docs/VOICE_REQUIREMENTS.md` privacy/cancel/nonblocking/command safety constraints preserved. Historical voice-roadmap file/test budget applies to historical phases; OSW parity feature requires separate owner review, do not silently downgrade acceptance or rewrite the historical contract. Solution quality and mature upstream reuse outrank development cost. All tasks use evidence, not inferred pass.
+Develop directly on `develop`; **do not create other feature branches/worktrees**. If the operator explicitly requests a temporary worktree later, use only `.wt/<name>` inside the product repo. Former dirty master state was preserved at tag `archive/pre-develop-20261011` (commit `215ff2f`) and is subject to selective reconciliation, not blind cherry-pick. The former voice branch at `61d96af` is part of `develop`. Re-fetch without resetting/overwriting uncommitted user work on implementation. Existing `docs/VOICE_REQUIREMENTS.md` privacy/cancel/nonblocking/command safety constraints preserved. Historical voice-roadmap file/test budget applies to historical phases; OSW parity feature requires independent multi-model technical review, not a pause awaiting owner after every gate. Do not silently downgrade acceptance or rewrite the historical contract. Solution quality and mature upstream reuse outrank development cost. All tasks use evidence, not inferred pass.
 
 ## Phase 1 — verification/research/decision (no feature edits)
 
@@ -40,7 +40,7 @@ Develop directly on `develop`; **do not create other feature branches/worktrees*
 - [ ] Compare streaming segmenter pre-roll, stable partial and stitching algorithms using deterministic fixtures.
 - [ ] Optional A5000/2080Ti only if actual network/compute latency measured; Gemini only with explicit cloud/data authorization.
 
-### P1.4 Architecture sign-off
+### P1.4 Independent architecture sign-off (no routine owner wait)
 **Files:** `SPEC.md`, `PLAN.md`, `TASKS.md`, `BASELINE.md`, `REFERENCE_MATRIX.md`.
 - [ ] Review key target safety and clipboard regression risks, model privacy, fallback behavior and upstream legal notices.
 - [ ] Demonstrate reference decision: Handy external vs sidecar port; avoid CLI toggle being mistaken for embed API.

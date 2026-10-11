@@ -44,12 +44,10 @@ Write-Host "Existing uncommitted files are preserved:"
 git status --short
 
 $prompt = @'
-Read GOAL.md first and treat it as the authoritative scope and progress contract.
-This is the same Pi session, now interactive in Windows Terminal; continue the interrupted task, do not restart planning from scratch.
-Preserve existing uncommitted docs/voice-dictation/SOURCE_AUDIT.md and BENCHMARK.md; inspect them before modifying or committing.
-Work only on develop, one active gate at a time. Start from the verified current G03/G04 evidence. Complete upstream OSW/Handy/OpenWhispr source mapping and Windows validations, then proceed through the approved implementation gates.
-Use proven long-term solutions. Maintain full required parity; do not invent cheap approximations, unrelated subsystems, speculative features or new branches.
-Commit verified milestones locally and push develop for GOAL.md visibility. Never call an untested gate PASS. Stop and ask only for authorization, privacy, material capability tradeoffs or destructive operations.
+Read GOAL.md and docs/voice-dictation/AUTONOMOUS_WORKFLOW.md before doing anything. Load the installed multi-model-orchestration skill from C:\Users\admin\.agents\skills\multi-model-orchestration\SKILL.md.
+This is the same interactive Pi session, not a new project. Resume the approved full-delivery SubagentWorkflow or create and run it if missing; do not stop after a gate waiting for user review.
+Keep one serial writer on develop, with independent read-only multi-model subagent reviewers. Preserve current changes, use verified upstream techniques, meet the complete acceptance contract and automatically advance through G14 after each validated checkpoint.
+Only seek permission for real privacy/security, credentials, destructive action or a material reduction in product quality. No uncontrolled infinite loops, duplicate Pi workers or new branches.
 '@
 
 & $pi --provider cliproxy-g8 --model gpt-6.1-sol --thinking high --session-id $sessionId --name desktop-pet-osw-develop --approve $prompt

@@ -83,6 +83,9 @@ When two solutions satisfy **the same complete contract**, choose the proven sim
 
 ## 4. Agent execution and checkpoint contract
 
+**New owner directive (2026-10-11):** implement the finite, durable, multi-model workflow specified in `docs/voice-dictation/AUTONOMOUS_WORKFLOW.md` using the installed `multi-model-orchestration` skill and `SubagentWorkflow` tool. **Do not stop between gates to request routine owner review.** Delegate Opus/Sonnet independent technical reviews and automatically proceed on accepted evidence, with one serial writer on `develop`. Only stop for genuine privacy/credentials/destructive actions or material changes to locked acceptance. Do not substitute an uncontrolled infinite loop, duplicate Pi processes or cheap approximations. The G00-G14 criteria and proof requirements remain unchanged.
+
+
 - **ONE owner, ONE checkout, ONE branch, ONE primary active gate.** Local work on `develop` only; create worktrees only by explicit user request, and then solely within `.wt/`.
 - **Read this file at session start and every milestone.** Next gate selected from the scoreboard, not by ad-hoc ideas. `TASKS.md` may track detailed subtasks but must never redefine overall scope or falsely mark a gate PASS.
 - **Update this file after each material evidence checkpoint** and at least whenever current gate/blocker/next action changes. Keep header's last-checked value, progress count and last proof current; add a short entry to the log below. State `BLOCKED` with root cause, real failure evidence and the next unblocking experiment; don't spin indefinitely.

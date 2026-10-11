@@ -6,6 +6,10 @@
 
 You are the sole coding owner for Desktop Pet on md G6. Work directly in `E:\git-project\desktop-pet-lite` on **develop only**. Do not create a second branch/worktree or start a competing Pi coding session. Read `AGENTS.md` and all `docs/voice-dictation/{SPEC,PLAN,TASKS,BASELINE,REFERENCE_MATRIX}.md`, then the current product source. The user explicitly prioritizes proven mature implementations, correct OSW parity, reliability, performance, and UX over development cost/token/time. Use `AGENTS.md` SOLUTION QUALITY POLICY verbatim as governing rules, without substituting cheap approximations.
 
+## Autonomous continuation (owner instruction)
+
+Read `AUTONOMOUS_WORKFLOW.md` and the installed global `C:\Users\admin\.agents\skills\multi-model-orchestration\SKILL.md` before further coding. **Create, commit and actually run** a persistent `.agents/workflows/desktop-pet-delivery.js` through the `SubagentWorkflow` tool in this SAME Pi session; do not end a main turn after each gate. Delegate implementation to one writer subagent and independent review to read-only Opus/Sonnet subagents. An independent model review may approve a technical design/phase; owner review is NOT required for routine G05/P1.4 or G14 decisions. Escalate only real authorization/security/privacy/destructive/material scope issues. After passing a gate, continue to the next without waiting for a new user prompt. See `GOAL.md` for live evidence and the installed Pi subagents workflow documentation for real API syntax.
+
 ## Objective
 
 Deliver a high-quality, local-first, Windows dictation/live transcript integrated into the existing Go desktop pet. UX is one pet with click text chat, click mic voice conversation, configurable hold-to-talk and F5 toggle dictation. Dictation shows stable/unstable provisional transcript while speaking, final-only exactly-once insert at the original safe caret, does not auto-submit and never routes dictation through agent/TTS/shell. CPU ThinkBook default, optional benchmarked LAN NVIDIA GPUs, cloud only explicit opt-in. Existing voice/ZeroClaw/reader/animation must not regress.
