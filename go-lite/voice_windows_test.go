@@ -9,11 +9,117 @@ import (
 	"desktop-pet-lite-go/internal/voice"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
+
+func TestDictationEnvelopePreservesUnicodeAndSession(t *testing.T) {
+	var event voiceEvent
+	if err := json.Unmarshal([]byte(`{"type":"partial","protocol_version":1,"session_id":"owned","seq":7,"stable":"Xin chào","unstable":"API_name ✓","language":"vi"}`), &event); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]any{"protocol_version": float64(1), "session_id": "owned", "seq": float64(7), "stable": "Xin chào", "unstable": "API_name ✓", "language": "vi"} {
+		if fields[field] != want {
+			t.Fatalf("lost dictation field %s: got %v want %v", field, fields[field], want)
+		}
+	}
+}
+
+func TestDictationEventsNeverEnterLegacyCommandAgentOrSpeechRoute(t *testing.T) {
+	writer := &testWriteCloser{}
+	controller := &VoiceController{stdin: writer, session: voice.NewSession(time.Second), ready: true}
+	app := &App{Voice: controller}
+	for _, kind := range []string{"partial", "final", "cancelled", "error", "done"} {
+		app.handleVoiceEvent(voiceEvent{Type: kind, Text: "pet ơi open notepad"})
+	}
+	if writer.Len() != 0 || controller.activeTurn != "" || len(controller.queue) != 0 {
+		t.Fatal("dictation crossed into legacy command/agent/TTS route")
+	}
+}
+
+func TestVoiceTerminalDeliveryWaitsForQueueSpaceOrCancellation(t *testing.T) {
+	for _, kind := range []string{"partial", "final", "error", "cancelled", "done"} {
+		t.Run(kind, func(t *testing.T) {
+			events := make(chan voiceEvent, 1)
+			events <- voiceEvent{Type: "prior"}
+			controller := &VoiceController{events: events}
+			finished := make(chan bool, 1)
+			go func() { finished <- controller.deliverEvent(context.Background(), voiceEvent{Type: kind}) }()
+			if event := <-events; event.Type != "prior" {
+				t.Fatalf("lost prior event: %#v", event)
+			}
+			select {
+			case event := <-events:
+				if event.Type != kind {
+					t.Fatalf("lost %s: %#v", kind, event)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("lost %s on full queue", kind)
+			}
+			if !<-finished {
+				t.Fatal("delivery unexpectedly failed")
+			}
+		})
+	}
+	events := make(chan voiceEvent)
+	controller := &VoiceController{events: events}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if controller.deliverEvent(ctx, voiceEvent{Type: "done"}) {
+		t.Fatal("delivery ignored process cancellation")
+	}
+}
+
+func TestVoiceStopReturnsImmediatelyEvenWhenShutdownPipeBlocks(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	controller := &VoiceController{stdin: writer, done: make(chan struct{})}
+	returned := make(chan struct{})
+	go func() { controller.stop(); close(returned) }()
+	select {
+	case <-returned:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("stop blocked its caller on the child stdin pipe")
+	}
+}
+
+func TestVoiceCommandWriteDeadlineCancelsBlockedResident(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	controller := newVoiceController(make(chan voiceEvent), false, false, nil)
+	defer controller.cancel()
+	workerDone := make(chan struct{})
+	go func() { controller.writeCommands(controller.processContext, writer); close(workerDone) }()
+	defer func() {
+		reader.Close()
+		select {
+		case <-workerDone:
+		case <-time.After(time.Second):
+			t.Error("command writer leaked")
+		}
+	}()
+	if err := controller.send(voiceCommand{Type: "dictation_cancel"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-controller.processContext.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked pipe write retained resident owner past deadline")
+	}
+}
 
 func TestNormalVoiceUsesZeroClawWithoutLocalChatLifecycle(t *testing.T) {
 	controller := newVoiceController(make(chan voiceEvent, 1), true, false, nil)

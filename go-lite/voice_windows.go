@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -25,22 +26,34 @@ import (
 )
 
 type voiceEvent struct {
-	Type         string `json:"type"`
-	State        string `json:"state"`
-	TurnID       string `json:"turn_id"`
-	Text         string `json:"text"`
-	Detail       string `json:"detail"`
-	EOSNS        int64  `json:"eos_ns"`
-	STTDoneNS    int64  `json:"stt_done_ns"`
-	TTSDoneNS    int64  `json:"tts_done_ns"`
-	FirstAudioNS int64  `json:"first_audio_ns"`
+	Type            string `json:"type"`
+	ProtocolVersion int    `json:"protocol_version,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	Seq             uint64 `json:"seq,omitempty"`
+	Stable          string `json:"stable,omitempty"`
+	Unstable        string `json:"unstable,omitempty"`
+	Language        string `json:"language,omitempty"`
+	Outcome         string `json:"outcome,omitempty"`
+	Code            string `json:"code,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	AudioEndMS      int64  `json:"audio_end_ms,omitempty"`
+	State           string `json:"state"`
+	TurnID          string `json:"turn_id"`
+	Text            string `json:"text"`
+	Detail          string `json:"detail"`
+	EOSNS           int64  `json:"eos_ns"`
+	STTDoneNS       int64  `json:"stt_done_ns"`
+	TTSDoneNS       int64  `json:"tts_done_ns"`
+	FirstAudioNS    int64  `json:"first_audio_ns"`
 }
 
 type voiceCommand struct {
-	Type   string `json:"type"`
-	TurnID string `json:"turn_id,omitempty"`
-	Text   string `json:"text,omitempty"`
-	Lang   string `json:"lang,omitempty"`
+	Type            string `json:"type"`
+	ProtocolVersion int    `json:"protocol_version,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	TurnID          string `json:"turn_id,omitempty"`
+	Text            string `json:"text,omitempty"`
+	Lang            string `json:"lang,omitempty"`
 }
 
 type voiceSpeakRequest struct {
@@ -66,6 +79,10 @@ type VoiceController struct {
 	agentWatchStop context.CancelFunc
 	stdin          io.WriteCloser
 	done           chan struct{}
+	commands       chan voiceCommand
+	processContext context.Context
+	stopOnce       sync.Once
+	stopping       atomic.Bool
 	mu             sync.Mutex
 	agentMu        sync.Mutex
 }
@@ -82,13 +99,17 @@ func (a *App) startVoiceAsync(listen, commandMode bool, sayText, readFile, readL
 }
 
 func newVoiceController(events chan<- voiceEvent, listen, commandMode bool, requests []voiceSpeakRequest) *VoiceController {
+	ctx, cancel := context.WithCancel(context.Background())
 	controller := &VoiceController{
-		events:      events,
-		session:     voice.NewSession(5 * time.Second),
-		listen:      listen,
-		commandMode: commandMode,
-		queue:       append([]voiceSpeakRequest(nil), requests...),
-		done:        make(chan struct{}),
+		events:         events,
+		session:        voice.NewSession(5 * time.Second),
+		listen:         listen,
+		commandMode:    commandMode,
+		queue:          append([]voiceSpeakRequest(nil), requests...),
+		done:           make(chan struct{}),
+		commands:       make(chan voiceCommand, 32),
+		processContext: ctx,
+		cancel:         cancel,
 	}
 	if controller.needsZeroClaw() {
 		if sidecarDir, err := locateVoiceSidecar(); err == nil {
@@ -135,6 +156,9 @@ func (v *VoiceController) needsZeroClaw() bool {
 
 func (v *VoiceController) run() error {
 	defer close(v.done)
+	if v.cancel != nil {
+		defer v.cancel()
+	}
 	sidecarDir, err := locateVoiceSidecar()
 	if err != nil {
 		return err
@@ -144,9 +168,11 @@ func (v *VoiceController) run() error {
 		v.agentChat = client.ChatEvents
 		v.agentWatch = client.Watch
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	v.cancel = cancel
-	defer cancel()
+	ctx := v.processContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	defer v.cancelAgentWatch()
 	script := filepath.Join(sidecarDir, "voice_sidecar.py")
 	args := []string{"run", "--project", sidecarDir, "--no-sync", "python", script}
 	if v.commandMode {
@@ -158,21 +184,52 @@ func (v *VoiceController) run() error {
 	cmd.Dir = sidecarDir
 	cmd.Env = append(os.Environ(), "VIRTUAL_ENV=")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	stdout, err := cmd.StdoutPipe()
+	// Own the read ends: Wait may run concurrently without closing them before
+	// terminal JSON drains. A crashed launcher cannot leave its Python child's
+	// inherited pipe handles keeping the reader alive forever.
+	stdout, stdoutWrite, err := os.Pipe()
 	if err != nil {
 		return fmt.Errorf("voice stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
+	defer stdout.Close()
+	defer stdoutWrite.Close()
+	stderr, stderrWrite, err := os.Pipe()
 	if err != nil {
 		return fmt.Errorf("voice stderr pipe: %w", err)
 	}
+	defer stderr.Close()
+	defer stderrWrite.Close()
+	cmd.Stdout, cmd.Stderr = stdoutWrite, stderrWrite
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("voice stdin pipe: %w", err)
 	}
+	v.mu.Lock()
 	v.stdin = stdin
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start voice sidecar with uv: %w", err)
+	v.mu.Unlock()
+	job, err := startVoiceProcess(cmd)
+	if err != nil {
+		return fmt.Errorf("start owned voice sidecar: %w", err)
+	}
+	defer job.close()
+	_ = stdoutWrite.Close()
+	_ = stderrWrite.Close()
+	waited := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		job.close()
+		waited <- err
+	}()
+	// Context cancellation always closes the entire job, never just uv.
+	go func() {
+		select {
+		case <-ctx.Done():
+			job.close()
+		case <-v.done:
+		}
+	}()
+	if v.commands != nil {
+		go v.writeCommands(ctx, stdin)
 	}
 	log.Printf("voice sidecar started pid=%d dir=%s", cmd.Process.Pid, sidecarDir)
 	go copyProcessDiagnostics("voice sidecar", stderr)
@@ -184,24 +241,20 @@ func (v *VoiceController) run() error {
 		go v.watchAgent(watchCtx)
 	}
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 4096), 1024*1024)
-	for scanner.Scan() {
+	scanErr := readVoiceProtocolLines(stdout, func(line []byte) bool {
 		var event voiceEvent
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
 			log.Printf("voice protocol ignored malformed event: %v", err)
-			continue
+			return true
 		}
 		log.Printf("voice protocol event type=%s state=%s turn=%s", event.Type, event.State, event.TurnID)
-		select {
-		case v.events <- event:
-		default:
-			log.Printf("voice event queue full; dropped type=%s state=%s", event.Type, event.State)
-		}
+		return v.deliverEvent(ctx, event)
+	})
+	if scanErr != nil {
+		job.close() // Protocol failure must not wait on a still-running child.
 	}
-	scanErr := scanner.Err()
-	waitErr := cmd.Wait()
-	if ctx.Err() != nil {
+	waitErr := <-waited
+	if ctx.Err() != nil && v.stopping.Load() {
 		return nil
 	}
 	if scanErr != nil {
@@ -210,7 +263,21 @@ func (v *VoiceController) run() error {
 	if waitErr != nil {
 		return fmt.Errorf("voice sidecar exited: %w", waitErr)
 	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("voice sidecar retired after command failure: %w", ctx.Err())
+	}
 	return nil
+}
+
+// The scanner runs off the UI thread. Backpressure is preferable to silently
+// losing a final/error/done; cancellation releases delivery if the owner exits.
+func (v *VoiceController) deliverEvent(ctx context.Context, event voiceEvent) bool {
+	select {
+	case v.events <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func copyProcessDiagnostics(name string, reader io.Reader) {
@@ -238,13 +305,47 @@ func locateVoiceSidecar() (string, error) {
 	return "", fmt.Errorf("voice-sidecar not found near cwd=%s exe=%s", cwd, exe)
 }
 
+// One bounded queue keeps pipe writes and their backpressure off the UI thread.
 func (v *VoiceController) send(command voiceCommand) error {
+	if v.commands != nil {
+		select {
+		case <-v.processContext.Done():
+			return fmt.Errorf("voice sidecar stopped")
+		default:
+		}
+		select {
+		case v.commands <- command:
+			return nil
+		default:
+			v.cancel() // No silent loss of stop/cancel on an overloaded pipe.
+			return fmt.Errorf("voice command queue full; sidecar retired")
+		}
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.stdin == nil {
 		return fmt.Errorf("voice sidecar is not ready")
 	}
 	return json.NewEncoder(v.stdin).Encode(command)
+}
+
+func (v *VoiceController) writeCommands(ctx context.Context, stdin io.WriteCloser) {
+	defer stdin.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case command := <-v.commands:
+			// A stuck stdin reader cannot retain capture/model ownership forever.
+			timer := time.AfterFunc(2*time.Second, v.cancel)
+			err := json.NewEncoder(stdin).Encode(command)
+			timer.Stop()
+			if err != nil {
+				v.cancel()
+				return
+			}
+		}
+	}
 }
 
 func (v *VoiceController) armListenOnce() bool {
@@ -382,20 +483,22 @@ func (v *VoiceController) isStopped() bool {
 }
 
 func (v *VoiceController) stop() {
-	v.cancelAgent()
-	v.cancelAgentWatch()
-	_ = v.send(voiceCommand{Type: "shutdown"})
-	if v.done == nil {
-		return
-	}
-	select {
-	case <-v.done:
-		return
-	case <-time.After(2 * time.Second):
-		if v.cancel != nil {
-			v.cancel()
-		}
-	}
+	v.stopOnce.Do(func() {
+		v.stopping.Store(true)
+		v.cancelAgent()
+		v.cancelAgentWatch()
+		// Independent deadline: even a blocked shutdown write cannot delay kill.
+		go func() {
+			select {
+			case <-v.done:
+			case <-time.After(2 * time.Second):
+				if v.cancel != nil {
+					v.cancel()
+				}
+			}
+		}()
+		go func() { _ = v.send(voiceCommand{Type: "shutdown"}) }()
+	})
 }
 
 func (a *App) processVoiceEvents() {

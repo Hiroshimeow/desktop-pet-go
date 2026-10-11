@@ -82,6 +82,65 @@ class ProtocolEncodingTest(unittest.TestCase):
         self.assertEqual(command["text"], "Mèo ơi, mình ở nhà nhé.")
 
 
+class BoundedJobsTest(unittest.TestCase):
+    def test_command_backlog_does_not_block_shutdown_reader(self):
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.command_queue = queue.Queue(maxsize=1)
+        runtime.command_queue.put({"type": "resume"})
+        runtime.stop_event = threading.Event()
+        runtime.lifecycle_lock = threading.Lock()
+        runtime.playback_cancelled = threading.Event()
+        finished = threading.Event()
+
+        def read():
+            with patch("voice_sidecar.sys.stdin", [json.dumps({"type": "pause"}), json.dumps({"type": "shutdown"})]):
+                runtime.read_commands()
+            finished.set()
+
+        worker = threading.Thread(target=read, daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(finished.wait(.2), "full queue blocked the shutdown reader")
+            self.assertTrue(runtime.stop_event.is_set())
+        finally:
+            while not finished.is_set():
+                try:
+                    runtime.command_queue.get(timeout=.2)
+                except queue.Empty:
+                    break
+            worker.join(1)
+
+
+class WriterBackpressureTest(unittest.TestCase):
+    def test_terminal_backlog_is_bounded_and_fails_closed(self):
+        from voice_sidecar import JsonlWriter
+        entered = threading.Event()
+        release = threading.Event()
+        retired = threading.Event()
+
+        class BlockedPipe:
+            def write(self, text):
+                entered.set()
+                release.wait(3)
+            def flush(self):
+                pass
+
+        writer = JsonlWriter()
+        writer.max_events = 8
+        writer.fatal = retired.set
+        try:
+            with patch("voice_sidecar.sys.stdout", BlockedPipe()):
+                writer.emit("state", state="ready")
+                self.assertTrue(entered.wait(1))
+                for index in range(100):
+                    writer.emit("done", session_id=str(index))
+                self.assertTrue(retired.is_set(), "terminal backlog grew without a retirement bound")
+                self.assertLessEqual(len(writer.queue), 8)
+        finally:
+            release.set()
+            writer.shutdown()
+
+
 class LanguageRoutingTest(unittest.TestCase):
     def test_transcribe_uses_auto_language_for_vi_and_ja(self) -> None:
         class Segment:
@@ -512,6 +571,84 @@ class ShutdownTranscriptionTest(unittest.TestCase):
         self.assertEqual(events, [("state", {"state": "thinking"})])
         self.assertEqual(runtime.pending, {})
         self.assertTrue(runtime.busy)
+
+
+class DictationIntegrationTest(unittest.TestCase):
+    def make_runtime(self):
+        runtime = VoiceRuntime.__new__(VoiceRuntime)
+        runtime.command_queue = queue.Queue()
+        runtime.speaker_queue = queue.Queue()
+        runtime.stop_event = threading.Event()
+        runtime.lifecycle_lock = threading.Lock()
+        runtime.playback_cancelled = threading.Event()
+        runtime.playback_active = threading.Event()
+        runtime.listen_enabled = False
+        runtime.dictation = types.SimpleNamespace(
+            active=False, start=lambda sid: True, stop=lambda sid: True,
+            cancel=lambda sid: True, shutdown=lambda: None,
+        )
+        return runtime
+
+    def test_reader_latches_matching_stop_cancel_without_control_loop(self):
+        runtime = self.make_runtime()
+        from unittest.mock import Mock
+        runtime.dictation.stop = Mock(return_value=True)
+        runtime.dictation.cancel = Mock(return_value=True)
+        runtime.dictation.shutdown = Mock()
+        lines = [
+            '{"type":"dictation_stop","protocol_version":1,"session_id":"owned"}\n',
+            '{"type":"dictation_cancel","protocol_version":1,"session_id":"owned"}\n',
+        ]
+        with patch("voice_sidecar.sys.stdin", lines):
+            runtime.read_commands()
+        runtime.dictation.stop.assert_called_once_with("owned")
+        runtime.dictation.cancel.assert_called_once_with("owned")
+        runtime.dictation.shutdown.assert_called_once()
+        self.assertEqual(runtime.command_queue.get_nowait(), {"type": "shutdown"})
+
+    def test_reader_preserves_start_then_immediate_stop_order(self):
+        runtime = self.make_runtime()
+        calls = []
+        runtime.dictation.start = lambda sid: calls.append(("start", sid)) or True
+        runtime.dictation.stop = lambda sid: calls.append(("stop", sid)) or True
+        with patch("voice_sidecar.sys.stdin", [
+            '{"type":"dictation_start","protocol_version":1,"session_id":"quick"}\n',
+            '{"type":"dictation_stop","protocol_version":1,"session_id":"quick"}\n',
+        ]):
+            runtime.read_commands()
+        self.assertEqual(calls, [("start", "quick"), ("stop", "quick")])
+
+    def test_dictation_start_is_separate_from_legacy_and_rejects_protocol_or_busy(self):
+        runtime = self.make_runtime()
+        from unittest.mock import Mock
+        runtime.dictation.start = Mock(return_value=True)
+        valid = {"type": "dictation_start", "protocol_version": 1, "session_id": "owned"}
+        with patch("voice_sidecar.emit"):
+            runtime.command_queue.put({**valid, "protocol_version": 2})
+            runtime.handle_commands()
+            runtime.dictation.start.assert_not_called()
+            runtime.listen_enabled = True
+            runtime.command_queue.put(valid)
+            runtime.handle_commands()
+            runtime.dictation.start.assert_not_called()
+            runtime.listen_enabled = False
+            runtime.playback_active.set()
+            runtime.command_queue.put(valid)
+            runtime.handle_commands()
+            runtime.dictation.start.assert_not_called()
+            runtime.playback_active.clear()
+            runtime.command_queue.put(valid)
+            runtime.handle_commands()
+        runtime.dictation.start.assert_called_once_with("owned")
+        self.assertTrue(runtime.speaker_queue.empty())
+
+    def test_legacy_speak_cannot_take_dictation_model_or_audio_ownership(self):
+        runtime = self.make_runtime()
+        runtime.dictation.active = True
+        runtime.command_queue.put({"type": "speak", "text": "must not speak"})
+        with patch("voice_sidecar.emit"):
+            runtime.handle_commands()
+        self.assertTrue(runtime.speaker_queue.empty())
 
 
 class PlaybackControlTest(unittest.TestCase):

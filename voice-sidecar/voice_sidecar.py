@@ -23,6 +23,8 @@ from faster_whisper import WhisperModel
 from huggingface_hub import snapshot_download
 from piper import PiperVoice
 
+from dictation import DictationStream
+
 SAMPLE_RATE = 16_000
 FRAME_MS = 30
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000
@@ -88,8 +90,107 @@ def synthesize_japanese_kokoro(pipeline: Any, text: str) -> np.ndarray:
     return np.concatenate(audio_chunks)
 
 
+class JsonlWriter:
+    """Dedicated background writer thread for stdout JSONL messages.
+
+    Protects against stdout pipe backpressure caused by UI modal loops.
+    Partials use latest-wins coalescing so backlog cannot cause O(N) pipe lag.
+    Critical terminal events (final, cancelled, error, done, state, speak_done, etc.)
+    are never dropped and strictly preserved in order.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.queue: deque[tuple[str, dict[str, Any], Any]] = deque()
+        self.partial_map: dict[str, dict[str, Any]] = {}
+        self.closed = False
+        self.max_events = 256
+        self.fatal = lambda: os._exit(71)
+        self.flushing = False
+        self.worker = threading.Thread(target=self._run, name="jsonl-stdout-writer", daemon=True)
+        self.worker.start()
+
+    def emit(self, event_type: str, **payload: Any) -> None:
+        stream = sys.stdout
+        with self.cond:
+            if self.closed:
+                return
+            session_id = payload.get("session_id", "")
+            replacing_partial = event_type == "partial" and session_id in self.partial_map
+            if len(self.queue) >= self.max_events and not replacing_partial:
+                # Never silently lose a final and pretend the owner succeeded.
+                # A wedged GUI/pipe retires this process at a fixed memory bound.
+                self.closed = True
+                self.cond.notify_all()
+                self.fatal()
+                return
+            if event_type == "partial" and session_id:
+                # Latest-wins: if a partial for this session is already queued,
+                # update its payload in place so we don't spam outdated previews.
+                if session_id in self.partial_map:
+                    self.partial_map[session_id].clear()
+                    self.partial_map[session_id].update({"type": event_type, **payload})
+                else:
+                    item_dict = {"type": event_type, **payload}
+                    self.partial_map[session_id] = item_dict
+                    self.queue.append(("partial", item_dict, stream))
+            else:
+                if session_id and event_type in ("final", "cancelled", "error", "done"):
+                    # Discard any pending partial for this session; terminal takes over
+                    dead = self.partial_map.pop(session_id, None)
+                    if dead is not None:
+                        dead["_dead"] = True
+                self.queue.append((event_type, {"type": event_type, **payload}, stream))
+            self.cond.notify_all()
+
+    def flush(self, timeout: float = 1.0) -> None:
+        with self.cond:
+            self.cond.wait_for(lambda: not self.queue and not self.flushing, timeout=timeout)
+
+    def _run(self) -> None:
+        while True:
+            batch: list[tuple[str, Any]] = []
+            with self.cond:
+                self.cond.wait_for(lambda: bool(self.queue) or self.closed, timeout=0.1)
+                while self.queue:
+                    kind, data, stream = self.queue.popleft()
+                    session_id = data.get("session_id", "")
+                    if kind == "partial" and session_id:
+                        self.partial_map.pop(session_id, None)
+                    if data.get("_dead"):
+                        continue
+                    batch.append((json.dumps(data, ensure_ascii=True), stream))
+                if self.closed and not batch:
+                    break
+                if batch:
+                    self.flushing = True
+            for line, stream in batch:
+                try:
+                    stream.write(line + "\n")
+                    stream.flush()
+                except Exception:
+                    pass
+            if batch:
+                with self.cond:
+                    self.flushing = False
+                    self.cond.notify_all()
+
+    def shutdown(self, timeout: float = 1.0) -> None:
+        with self.cond:
+            self.closed = True
+            self.cond.notify_all()
+        self.worker.join(timeout=timeout)
+
+
+JSONL_WRITER = JsonlWriter()
+
+
 def emit(event_type: str, **payload: Any) -> None:
-    print(json.dumps({"type": event_type, **payload}, ensure_ascii=True), flush=True)
+    # Speaker, control and dictation workers share non-blocking background writer.
+    JSONL_WRITER.emit(event_type, **payload)
+    if sys.stdout is not sys.__stdout__:
+        JSONL_WRITER.flush(0.2)
 
 
 def diagnostic(message: str) -> None:
@@ -326,8 +427,8 @@ class VoiceRuntime:
         self.listen_once_armed = False
         self.vad = webrtcvad.Vad(2)
         self.audio_queue: queue.Queue[tuple[int, bytes]] = queue.Queue(maxsize=400)
-        self.command_queue: queue.Queue[dict[str, Any]] = queue.Queue()
-        self.speaker_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.command_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=32)
+        self.speaker_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=32)
         self.stop_event = threading.Event()
         self.lifecycle_lock = threading.Lock()
         self.playback_paused = threading.Event()
@@ -338,6 +439,10 @@ class VoiceRuntime:
         self.pending: dict[str, dict[str, int]] = {}
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.metrics_path = LOG_DIR / "turns.jsonl"
+        self.dictation = DictationStream(
+            self.stt, self.vad, self.stop_event, emit=emit,
+            stream_factory=sd.RawInputStream,
+        )
 
     def enqueue_frame(self, frame: bytes, at_ns: int | None = None) -> bool:
         if self.busy or len(frame) != FRAME_BYTES:
@@ -403,13 +508,25 @@ class VoiceRuntime:
                     if command.get("type") == "shutdown":
                         # The control loop may be inside a native STT call.
                         self.shutdown()
-                        self.command_queue.put(command)
+                        self.queue_command(command)
                         return
-                    self.command_queue.put(command)
+                    if command.get("type") in ("dictation_start", "dictation_stop", "dictation_cancel"):
+                        # Dictation control commands are handled in exact arrival order
+                        # and never wait behind a native legacy decode/control tick.
+                        self.handle_dictation_command(command)
+                    else:
+                        self.queue_command(command)
             except json.JSONDecodeError as exc:
                 diagnostic(f"invalid command JSON: {exc}")
         self.shutdown()
-        self.command_queue.put({"type": "shutdown"})
+        self.queue_command({"type": "shutdown"})
+
+    def queue_command(self, command: dict[str, Any]) -> None:
+        try:
+            self.command_queue.put_nowait(command)
+        except queue.Full:
+            diagnostic("voice command backlog full; retiring audio owner")
+            self.shutdown()
 
     def clear_audio(self) -> None:
         while True:
@@ -465,6 +582,9 @@ class VoiceRuntime:
         with self.lifecycle_lock:
             self.playback_cancelled.set()
             self.stop_event.set()
+        dictation = getattr(self, "dictation", None)
+        if dictation is not None:
+            dictation.shutdown()
 
     def start_speaker_worker(self) -> threading.Thread:
         worker = self.speaker_thread
@@ -592,6 +712,26 @@ class VoiceRuntime:
             self.playback_cancelled.clear()
             emit("speak_done", turn_id=turn_id, lang=lang, cancelled=cancelled)
 
+    def handle_dictation_command(self, command: dict[str, Any]) -> None:
+        dictation = getattr(self, "dictation", None)
+        session_id = command.get("session_id")
+        if dictation is None or command.get("protocol_version") != 1 or not isinstance(session_id, str):
+            diagnostic("invalid dictation command envelope")
+            return
+        kind = command.get("type")
+        if kind == "dictation_start":
+            # Existing listening modes keep their own legacy capture lifetime.
+            # Dictation is available on the resident --no-listen owner only.
+            if self.listen_enabled or self.playback_active.is_set() or not self.speaker_queue.empty():
+                diagnostic("dictation unavailable while another audio mode owns capture/playback")
+                return
+            if not dictation.start(session_id):
+                diagnostic("dictation activation rejected: active, stale or terminated session")
+        elif kind == "dictation_stop":
+            dictation.stop(session_id)
+        elif kind == "dictation_cancel":
+            dictation.cancel(session_id)
+
     def handle_commands(self) -> None:
         while True:
             try:
@@ -599,9 +739,18 @@ class VoiceRuntime:
             except queue.Empty:
                 return
             command_type = command.get("type")
-            if command_type == "speak":
+            if command_type in ("dictation_start", "dictation_stop", "dictation_cancel"):
+                self.handle_dictation_command(command)
+            elif getattr(self, "dictation", None) is not None and self.dictation.active and command_type in ("speak", "listen_once", "resume"):
+                diagnostic("legacy audio command rejected during dictation")
+            elif command_type == "speak":
                 self.busy = True
-                self.speaker_queue.put(command)
+                try:
+                    self.speaker_queue.put_nowait(command)
+                except queue.Full:
+                    diagnostic("voice speaker backlog full; retiring audio owner")
+                    self.shutdown()
+                    return
             elif command_type == "listen_once":
                 self.arm_listen_once()
             elif command_type == "resume":
@@ -702,6 +851,9 @@ class VoiceRuntime:
             self.listen_loop()
         self.shutdown()
         speaker.join(timeout=2.0)
+        dictation = getattr(self, "dictation", None)
+        if dictation is not None and not dictation.join(2.0):
+            diagnostic("dictation native decoder did not stop before process exit")
         if speaker.is_alive():
             diagnostic("voice speaker worker did not stop before process exit")
         emit("state", state="stopped")
