@@ -72,3 +72,10 @@ transcripts/
 **/transcripts/
 *.transcript.txt
 *.transcript.json
+
+# Archived docs / temporary work
+/agent.md
+/LAST_UPDATE.md
+/stage_*.md
+/requirements-voice-reader.zip
+
